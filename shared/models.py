@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, String, Boolean, Integer, Float, Text, DateTime,
+    Column, String, Boolean, Integer, Text, DateTime,
     Date, ForeignKey, UniqueConstraint, Index, JSON
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -41,7 +41,7 @@ class EtlJobRun(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     file_id = Column(String(36), ForeignKey("etl_file.id"), nullable=False)
     status = Column(String(20), nullable=False, default="QUEUED")
-    triggered_by = Column(String(20), nullable=False, default="scheduler")
+    triggered_by = Column(String(20), nullable=False)
     started_at = Column(DateTime(timezone=True))
     finished_at = Column(DateTime(timezone=True))
     rows_total = Column(Integer)
@@ -104,7 +104,7 @@ class AlertEventChannel(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     alert_id = Column(String(36), ForeignKey("alert_event.id"), nullable=False)
     channel = Column(String(20), nullable=False)
-    status = Column(String(20), nullable=False, default="RETRYING")
+    status = Column(String(20), nullable=False, default="PENDING")
     sent_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
     retry_count = Column(Integer, default=0)
