@@ -48,8 +48,7 @@ def test_settings_database_url():
         importlib.reload(shared.config)
         from shared.config import Settings
         s = Settings()
-        assert "pg" in s.database_url
-        assert "db" in s.database_url
+        assert s.database_url == "postgresql+psycopg2://u:p@pg:5432/db"
         assert s.celery_broker_url == "redis://r:6379/0"
 
 
