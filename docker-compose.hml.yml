@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-etl_db}
-      POSTGRES_USER: ${POSTGRES_USER:-etl_user}
+      POSTGRES_DB: ${POSTGRES_DB:-etl_hml_db}
+      POSTGRES_USER: ${POSTGRES_USER:-etl_hml_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-etl_user} -d ${POSTGRES_DB:-etl_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-etl_hml_user} -d ${POSTGRES_DB:-etl_hml_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -33,8 +33,8 @@ services:
     image: minio/minio:RELEASE.2025-01-20T14-49-07Z
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9100:9000"
+      - "9101:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
@@ -53,8 +53,8 @@ services:
       dockerfile: api/Dockerfile
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4
     ports:
-      - "8000:8000"
-    env_file: .env
+      - "8100:8000"
+    env_file: .env.hml
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
@@ -66,7 +66,7 @@ services:
       context: .
       dockerfile: worker/Dockerfile
     command: celery -A worker.celery_app worker -Q etl_jobs -c 2 --loglevel=info
-    env_file: .env
+    env_file: .env.hml
     volumes:
       - alerts_data:/app/alerts
     depends_on:
@@ -80,7 +80,7 @@ services:
       context: .
       dockerfile: notifier/Dockerfile
     command: celery -A notifier.celery_app worker -Q notification_jobs -c 4 --loglevel=info
-    env_file: .env
+    env_file: .env.hml
     volumes:
       - alerts_data:/app/alerts
     depends_on:
@@ -93,7 +93,7 @@ services:
       context: .
       dockerfile: checker/Dockerfile
     command: celery -A checker.celery_app worker -Q celery -c 1 --loglevel=info
-    env_file: .env
+    env_file: .env.hml
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
@@ -104,7 +104,7 @@ services:
       context: .
       dockerfile: checker/Dockerfile
     command: celery -A checker.celery_app beat --schedule /app/beat/celerybeat-schedule --loglevel=info
-    env_file: .env
+    env_file: .env.hml
     volumes:
       - beat_data:/app/beat
     depends_on:
@@ -118,7 +118,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
     ports:
-      - "9090:9090"
+      - "9190:9090"
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -129,13 +129,13 @@ services:
   grafana:
     image: grafana/grafana:11.2.2
     ports:
-      - "3000:3000"
+      - "3100:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
-      POSTGRES_DB: ${POSTGRES_DB:-etl_db}
-      POSTGRES_USER: ${POSTGRES_USER:-etl_user}
+      POSTGRES_DB: ${POSTGRES_DB:-etl_hml_db}
+      POSTGRES_USER: ${POSTGRES_USER:-etl_hml_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - grafana_data:/var/lib/grafana

@@ -6,19 +6,22 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # PostgreSQL
-    POSTGRES_HOST: str
+    POSTGRES_HOST: str = "postgres"
     POSTGRES_PORT: int = 5432
-    POSTGRES_DB: str
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str = "etl_db"
+    POSTGRES_USER: str = "etl_user"
+    POSTGRES_PASSWORD: str = "change_me"
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 0
+    DB_POOL_TIMEOUT: int = 30
 
     # Redis
-    REDIS_URL: str
+    REDIS_URL: str = "redis://redis:6379/0"
 
     # MinIO
-    MINIO_ENDPOINT: str
-    MINIO_ACCESS_KEY: str
-    MINIO_SECRET_KEY: str
+    MINIO_ENDPOINT: str = "minio:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "change_me"
     MINIO_BUCKET: str = "etl-files"
     MINIO_SECURE: bool = False
 
@@ -31,9 +34,10 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
 
     # ETL Config
-    ETL_SCHEDULE_HOUR: int = 6
+    ETL_SCHEDULE_HOUR: int = 18
     ETL_SCHEDULE_MINUTE: int = 0
-    ETL_SOURCE_API_URL: str
+    ETL_TIMEZONE: str = "America/Sao_Paulo"
+    ETL_SOURCE_API_URL: str = "https://example.com/api/file"
     ETL_SOURCE_API_KEY: str = ""
     BAD_ROW_THRESHOLD_PCT: float = 5.0
     MAX_RETRIES: int = 3

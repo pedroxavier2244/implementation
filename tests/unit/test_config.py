@@ -22,7 +22,7 @@ def test_settings_loads_from_env():
         import shared.config
         importlib.reload(shared.config)
         from shared.config import Settings
-        s = Settings()
+        s = Settings(_env_file=None)
         assert s.POSTGRES_HOST == "localhost"
         assert s.REDIS_URL == "redis://localhost:6379/0"
         assert s.BAD_ROW_THRESHOLD_PCT == 5.0  # default value
@@ -47,7 +47,7 @@ def test_settings_database_url():
         import shared.config
         importlib.reload(shared.config)
         from shared.config import Settings
-        s = Settings()
+        s = Settings(_env_file=None)
         assert s.database_url == "postgresql+psycopg2://u:p@pg:5432/db"
         assert s.celery_broker_url == "redis://r:6379/0"
 
@@ -70,11 +70,12 @@ def test_settings_defaults():
         import shared.config
         importlib.reload(shared.config)
         from shared.config import Settings
-        s = Settings()
+        s = Settings(_env_file=None)
         assert s.POSTGRES_PORT == 5432
         assert s.MINIO_SECURE == False
-        assert s.ETL_SCHEDULE_HOUR == 6
+        assert s.ETL_SCHEDULE_HOUR == 18
         assert s.ETL_SCHEDULE_MINUTE == 0
+        assert s.ETL_TIMEZONE == "America/Sao_Paulo"
         assert s.BAD_ROW_THRESHOLD_PCT == 5.0
         assert s.MAX_RETRIES == 3
         assert s.FLAG_FILE_DIR == "/app/alerts"
