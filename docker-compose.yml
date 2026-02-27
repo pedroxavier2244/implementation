@@ -12,6 +12,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -26,9 +27,10 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -43,6 +45,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   api:
     build:
@@ -55,6 +58,7 @@ services:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
       minio:    { condition: service_healthy }
+    restart: unless-stopped
 
   worker-etl:
     build:
@@ -68,11 +72,12 @@ services:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
       minio:    { condition: service_healthy }
+    restart: unless-stopped
 
   worker-notifier:
     build:
       context: .
-      dockerfile: checker/Dockerfile
+      dockerfile: notifier/Dockerfile
     command: celery -A notifier.celery_app worker -Q notification_jobs -c 4 --loglevel=info
     env_file: .env
     volumes:
@@ -80,18 +85,23 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
+    restart: unless-stopped
 
   beat:
     build:
       context: .
       dockerfile: checker/Dockerfile
-    command: celery -A checker.celery_app beat --loglevel=info
+    command: celery -A checker.celery_app beat --schedule /app/beat/celerybeat-schedule --loglevel=info
     env_file: .env
+    volumes:
+      - beat_data:/app/beat
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
+    restart: unless-stopped
 
 volumes:
   postgres_data:
   minio_data:
   alerts_data:
+  beat_data:
