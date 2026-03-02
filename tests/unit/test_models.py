@@ -119,3 +119,22 @@ def test_metadata_column_name_is_metadata_not_metadata_underscore():
     cols = {c["name"] for c in inspector.get_columns("alert_event")}
     assert "metadata" in cols, "DB column should be named 'metadata'"
     assert "metadata_" not in cols, "DB column should NOT be named 'metadata_'"
+
+
+def test_cnpj_rf_cache_table_exists():
+    from shared.models import CnpjRfCache
+    assert CnpjRfCache.__tablename__ == "cnpj_rf_cache"
+    cols = {c.name for c in CnpjRfCache.__table__.columns}
+    assert "cnpj" in cols
+    assert "razao_social" in cols
+    assert "last_checked_at" in cols
+
+
+def test_cnpj_divergencia_table_exists():
+    from shared.models import CnpjDivergencia
+    assert CnpjDivergencia.__tablename__ == "cnpj_divergencia"
+    cols = {c.name for c in CnpjDivergencia.__table__.columns}
+    assert "cnpj" in cols
+    assert "campo" in cols
+    assert "valor_c6" in cols
+    assert "valor_rf" in cols

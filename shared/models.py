@@ -115,6 +115,38 @@ class AlertEventChannel(Base):
     alert = relationship("AlertEvent", back_populates="channels")
 
 
+class CnpjRfCache(Base):
+    __tablename__ = "cnpj_rf_cache"
+
+    cnpj               = Column(Text, primary_key=True)
+    razao_social       = Column(Text)
+    nome_fantasia      = Column(Text)
+    situacao_cadastral = Column(Text)
+    descricao_situacao = Column(Text)
+    cnae_fiscal        = Column(Text)
+    cnae_descricao     = Column(Text)
+    natureza_juridica  = Column(Text)
+    capital_social     = Column(Text)
+    porte              = Column(Text)
+    uf                 = Column(Text)
+    municipio          = Column(Text)
+    email              = Column(Text)
+    data_inicio_ativ   = Column(Text)
+    last_checked_at    = Column(DateTime(timezone=True))
+
+
+class CnpjDivergencia(Base):
+    __tablename__ = "cnpj_divergencia"
+
+    id       = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id   = Column(String(36), ForeignKey("etl_job_run.id"), nullable=False)
+    cnpj     = Column(Text, nullable=False)
+    campo    = Column(Text, nullable=False)
+    valor_c6 = Column(Text)
+    valor_rf = Column(Text)
+    found_at = Column(DateTime(timezone=True), default=utcnow)
+
+
 # Strategic indexes
 Index("idx_job_status",     EtlJobRun.status)
 Index("idx_job_file_id",    EtlJobRun.file_id)
