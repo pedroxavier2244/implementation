@@ -102,5 +102,5 @@ def test_cnpj_settings_defaults():
         importlib.reload(shared.config)
         from shared.config import Settings
         s = Settings(_env_file=None)
-    assert s.CNPJ_CACHE_TTL_DAYS == 30
-    assert s.BRASILAPI_TIMEOUT == 10
+        assert s.CNPJ_CACHE_TTL_DAYS == 30
+        assert s.BRASILAPI_TIMEOUT == 10
