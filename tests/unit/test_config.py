@@ -84,7 +84,23 @@ def test_settings_defaults():
 
 
 def test_cnpj_settings_defaults():
-    from shared.config import Settings
-    s = Settings()
+    env = {
+        "POSTGRES_HOST": "h",
+        "POSTGRES_DB": "d",
+        "POSTGRES_USER": "u",
+        "POSTGRES_PASSWORD": "p",
+        "REDIS_URL": "redis://r:6379/0",
+        "MINIO_ENDPOINT": "m:9000",
+        "MINIO_ACCESS_KEY": "k",
+        "MINIO_SECRET_KEY": "s",
+        "MINIO_BUCKET": "b",
+        "ETL_SOURCE_API_URL": "http://x.com",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        import importlib
+        import shared.config
+        importlib.reload(shared.config)
+        from shared.config import Settings
+        s = Settings(_env_file=None)
     assert s.CNPJ_CACHE_TTL_DAYS == 30
     assert s.BRASILAPI_TIMEOUT == 10
