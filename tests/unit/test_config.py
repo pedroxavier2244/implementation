@@ -81,3 +81,10 @@ def test_settings_defaults():
         assert s.FLAG_FILE_DIR == "/app/alerts"
         assert s.TELEGRAM_BOT_TOKEN == ""
         assert s.SMTP_HOST == ""
+
+
+def test_cnpj_settings_defaults():
+    from shared.config import Settings
+    s = Settings()
+    assert s.CNPJ_CACHE_TTL_DAYS == 30
+    assert s.BRASILAPI_TIMEOUT == 10

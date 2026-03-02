@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Alerts
     FLAG_FILE_DIR: str = "/app/alerts"
 
+    # CNPJ Verification
+    CNPJ_CACHE_TTL_DAYS: int = 30
+    BRASILAPI_TIMEOUT: int = 10
+
     @property
     def database_url(self) -> str:
         return (
