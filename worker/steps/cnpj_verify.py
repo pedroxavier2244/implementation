@@ -163,6 +163,8 @@ def run_cnpj_verify(session: Session, job_id: str) -> None:
 
         for api_field in RF_COLUMN_MAP:
             setattr(cache, api_field, rf_data.get(api_field))
+        # cnae_descricao is used for comparison (FIELD_MAP) but has no rf_* column,
+        # so it is not in RF_COLUMN_MAP — update it manually in the cache.
         cache.cnae_descricao = rf_data.get("cnae_descricao")
         cache.last_checked_at = now
         session.flush()

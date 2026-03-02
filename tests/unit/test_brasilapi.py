@@ -66,6 +66,7 @@ def test_compare_fields_detects_divergence():
     rf_data = {"razao_social": "EMPRESA NOVA SA", "uf": "RJ", "municipio": "RIO DE JANEIRO"}
 
     divergencias = compare_fields(c6_data, rf_data)
+    assert len(divergencias) == 3
     campos = [d["campo"] for d in divergencias]
     assert "nome_cliente" in campos
     assert "uf" in campos

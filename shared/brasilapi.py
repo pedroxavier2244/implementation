@@ -73,6 +73,8 @@ def compare_fields(c6_row: dict, rf_data: dict) -> list[dict]:
     for c6_field, rf_field in FIELD_MAP:
         c6_val = normalize_for_comparison(c6_row.get(c6_field))
         rf_val = normalize_for_comparison(rf_data.get(rf_field))
+        # Only flag confirmed mismatches where both sides have data.
+        # If one side is empty, we cannot determine the direction of the divergence.
         if c6_val and rf_val and c6_val != rf_val:
             divergencias.append({
                 "campo":    c6_field,
