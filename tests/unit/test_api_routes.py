@@ -69,3 +69,45 @@ def test_get_data_visao_cliente_by_documento(client):
 def test_get_data_visao_cliente_requires_digits(client):
     response = client.get("/v1/data/visao-cliente?documento=abc")
     assert response.status_code == 400
+
+
+def test_analytics_summary_contas_abertas(client):
+    with patch("api.routes.analytics.get_db_session") as mock_db:
+        mock_session = MagicMock()
+        mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
+        scalar_result = MagicMock()
+        scalar_result.scalar.return_value = 12
+        mock_session.execute.return_value = scalar_result
+
+        response = client.get("/v1/analytics/contas-abertas/summary?period=monthly&as_of=2026-03-02")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["indicator"] == "contas-abertas"
+        assert payload["period"] == "monthly"
+        assert payload["total"] == 12
+
+
+def test_analytics_details_contas_qualificadas(client):
+    with patch("api.routes.analytics.get_db_session") as mock_db:
+        mock_session = MagicMock()
+        mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
+        rows_result = MagicMock()
+        rows_result.mappings.return_value.all.return_value = [
+            {
+                "__total": 1,
+                "cd_cpf_cnpj_cliente": "12345678000190",
+                "nome_cliente": "Cliente KPI",
+            }
+        ]
+        mock_session.execute.return_value = rows_result
+
+        response = client.get("/v1/analytics/contas-qualificadas/details?period=daily&as_of=2026-03-02")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["indicator"] == "contas-qualificadas"
+        assert payload["total"] == 1
+        assert len(payload["items"]) == 1

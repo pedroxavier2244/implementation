@@ -5,6 +5,7 @@ SOURCE_SHEET_NAME = "Visão Cliente"
 STAGING_TABLE_NAME = "staging_visao_cliente"
 FINAL_TABLE_NAME = "final_visao_cliente"
 UPSERT_CONFLICT_COLUMNS = ("cd_cpf_cnpj_cliente",)
+UPSERT_CONFLICT_WHERE = "cd_cpf_cnpj_cliente IS NOT NULL"
 
 REQUIRED_COLUMNS = [
     "data_base",
@@ -110,6 +111,8 @@ REQUIRED_COLUMNS = [
     "status_qualificacao",
     "dias_desde_abertura",
     "m2_dias_faltantes",
+    "nivel_cartao",
+    "nivel_conta",
 ]
 
 

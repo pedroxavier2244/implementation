@@ -1,92 +1,351 @@
 # ETL System
 
-Automated ETL with daily scheduling, multichannel alerts, and an idempotent pipeline.
+ETL diario com orquestracao por filas, alertas e API para consumo de dados e indicadores.
 
-## Quick Start
+## Quick Start (Dev)
 
 ```bash
 cp .env.example .env
-# Edit .env with real values
-docker compose build
-docker compose up -d
+# edite .env com valores reais
+
+docker compose up -d --build
 docker compose exec api alembic upgrade head
 ```
 
-## Services
+Check basico:
 
-| Service | URL |
+```bash
+curl http://localhost:8000/health
+```
+
+## URLs locais
+
+| Servico | URL |
 |---|---|
-| API | http://localhost:8000/docs |
+| API (Swagger) | http://localhost:8000/docs |
+| API OpenAPI JSON | http://localhost:8000/openapi.json |
 | MinIO Console | http://localhost:9001 |
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 |
 
-## API Reference
+Grafana default: `admin` / `admin`.
 
-Swagger UI is available at `http://localhost:8000/docs`.
-Integration guide: `docs/api-integracao.md`.
+## Integracao da API (guia rapido)
 
-Data freshness rule:
-- The ETL keeps one row per `cd_cpf_cnpj_cliente` in `final_visao_cliente`.
-- For duplicates, the row with latest `data_base` wins.
-- Older `data_base` values do not overwrite newer rows already saved.
+Base URL local: `http://localhost:8000`
 
-Swagger by environment:
+Fluxo recomendado para integracao:
 
-- Production/Local: `http://localhost:8000/docs`
-- Staging/HML: `http://localhost:8100/docs`
+1. Chamar `POST /v1/files/sync` para baixar o arquivo mais recente.
+2. Listar arquivos em `GET /v1/files` e pegar o `file_id`.
+3. Processar arquivo com `POST /v1/jobs/run`.
+4. Acompanhar execucao em `GET /v1/jobs` ou `GET /v1/jobs/{job_id}`.
+5. Consumir dados consolidados em:
+   - `GET /v1/data/visao-cliente`
+   - `GET /v1/analytics/...`
 
-Grafana default login: `admin` / `admin`.
-Operational dashboard: `http://localhost:3000/d/etl-control-center/etl-control-center`.
+Regra de consolidacao:
 
-## HML/Test Environment
+- A tabela final mantem 1 linha por `cd_cpf_cnpj_cliente`.
+- Em conflito, vence o registro com `data_base` mais recente.
+- Um arquivo com `data_base` mais antiga nao sobrescreve um registro mais novo.
 
-Run an isolated test stack in parallel with production/local:
+## Catalogo de endpoints
+
+### Health/Observabilidade
+
+- `GET /health`
+- `GET /ready`
+- `GET /metrics`
+
+### Arquivos (`/v1/files`)
+
+- `GET /v1/files`
+- `GET /v1/files/{file_id}`
+- `POST /v1/files/upload` (`multipart/form-data`, campo `file`)
+- `POST /v1/files/sync`
+
+### Jobs (`/v1/jobs`)
+
+- `POST /v1/jobs/run` body: `{"file_id":"<uuid>"}`
+- `POST /v1/jobs/reprocess/{file_id}`
+- `GET /v1/jobs`
+- `GET /v1/jobs/{job_id}`
+
+### Dados (`/v1/data`)
+
+- `GET /v1/data/visao-cliente?documento=<cpf_ou_cnpj>&limit=1&offset=0`
+
+### Analytics (`/v1/analytics`)
+
+Cada indicador tem 2 rotas: `summary` e `details`.
+
+- `GET /v1/analytics/contas-abertas/summary`
+- `GET /v1/analytics/contas-abertas/details`
+- `GET /v1/analytics/qualificacao-c6pay/summary`
+- `GET /v1/analytics/qualificacao-c6pay/details`
+- `GET /v1/analytics/instalacao-c6pay/summary`
+- `GET /v1/analytics/instalacao-c6pay/details`
+- `GET /v1/analytics/contas-qualificadas/summary`
+- `GET /v1/analytics/contas-qualificadas/details`
+
+Parametros comuns:
+
+- `period`: `daily | weekly | monthly`
+- `as_of`: data de referencia (`YYYY-MM-DD`)
+- `limit` e `offset` (somente em `details`)
+
+Exemplo:
+
+```bash
+curl "http://localhost:8000/v1/analytics/contas-abertas/summary?period=monthly&as_of=2026-02-21"
+```
+
+### Alertas (`/v1/alerts`)
+
+- `GET /v1/alerts`
+- `GET /v1/alerts/{alert_id}`
+
+### CNPJ (`/v1/cnpj`)
+
+- `GET /v1/cnpj/divergencias/list`
+- `GET /v1/cnpj/{cnpj}`
+
+## Contratos JSON (request/response)
+
+### 1) `POST /v1/jobs/run`
+
+Request JSON:
+
+```json
+{
+  "file_id": "96358a3a-dcd1-4497-b874-f69bcf3b22f7"
+}
+```
+
+Response 200:
+
+```json
+{
+  "job_id": "8b427c66-3842-4eaa-9722-59d887c9e8c4",
+  "status": "QUEUED"
+}
+```
+
+Response de erro (exemplo 404):
+
+```json
+{
+  "detail": "File not found"
+}
+```
+
+### 2) `GET /v1/jobs/{job_id}`
+
+Response 200 (exemplo):
+
+```json
+{
+  "id": "4492ab5f-ebe4-4b8c-9386-77b32c294212",
+  "status": "DONE",
+  "triggered_by": "scheduler",
+  "rows_total": 161657,
+  "rows_ok": 161657,
+  "rows_bad": 0,
+  "retry_count": 0,
+  "started_at": "2026-03-02T15:56:51.009266Z",
+  "finished_at": "2026-03-02T16:22:50.431701Z",
+  "steps": [
+    {
+      "step_name": "extract",
+      "status": "DONE",
+      "started_at": "2026-03-02T15:56:51.087469Z",
+      "finished_at": "2026-03-02T15:58:08.090232Z",
+      "error_message": null
+    }
+  ]
+}
+```
+
+### 3) `GET /v1/files`
+
+Response 200 (exemplo):
+
+```json
+{
+  "items": [
+    {
+      "id": "96358a3a-dcd1-4497-b874-f69bcf3b22f7",
+      "file_date": "2026-03-02",
+      "filename": "Relatorio de Producao 19.02.26.xlsx",
+      "hash_sha256": "86a398bfda92b48c0b2627bbf181770b348b8f01e0370b5ae1251a72757c90ca",
+      "is_valid": true,
+      "is_processed": true,
+      "downloaded_at": "2026-03-02T14:06:19.887956Z"
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+### 4) `POST /v1/files/upload`
+
+Nao recebe JSON. Recebe `multipart/form-data` com campo `file`.
+
+Response 200:
+
+```json
+{
+  "id": "f5d2bb22-1b6b-4b5d-9834-7f8f3ec9f3f2",
+  "file_date": "2026-03-02",
+  "filename": "arquivo.xlsx",
+  "hash_sha256": "....",
+  "is_valid": true,
+  "is_processed": false,
+  "downloaded_at": "2026-03-02T20:10:00.000000Z"
+}
+```
+
+### 5) `GET /v1/data/visao-cliente`
+
+Request:
+
+```text
+/v1/data/visao-cliente?documento=7501147000104&limit=1&offset=0
+```
+
+Response 200 (exemplo):
+
+```json
+{
+  "documento_consultado": "7501147000104",
+  "total": 1,
+  "limit": 1,
+  "offset": 0,
+  "items": [
+    {
+      "cd_cpf_cnpj_cliente": "7501147000104",
+      "nome_cliente": "LUG MATERIAL DE CONSTRUCAO LTDA",
+      "data_base": "2026-02-21 00:00:00"
+    }
+  ]
+}
+```
+
+### 6) `GET /v1/analytics/.../summary`
+
+Exemplo request:
+
+```text
+/v1/analytics/contas-abertas/summary?period=monthly&as_of=2026-02-21
+```
+
+Response 200:
+
+```json
+{
+  "indicator": "contas-abertas",
+  "period": "monthly",
+  "as_of": "2026-02-21",
+  "period_start": "2026-02-01",
+  "period_end": "2026-02-28",
+  "total": 5249
+}
+```
+
+### 7) `GET /v1/analytics/.../details`
+
+Exemplo request:
+
+```text
+/v1/analytics/contas-abertas/details?period=monthly&as_of=2026-02-21&limit=20&offset=0
+```
+
+Response 200:
+
+```json
+{
+  "indicator": "contas-abertas",
+  "period": "monthly",
+  "as_of": "2026-02-21",
+  "period_start": "2026-02-01",
+  "period_end": "2026-02-28",
+  "total": 5249,
+  "limit": 20,
+  "offset": 0,
+  "items": []
+}
+```
+
+### 8) Erros padrao da API
+
+A maioria dos erros retorna:
+
+```json
+{
+  "detail": "mensagem de erro"
+}
+```
+
+Exemplos:
+
+- `400`: parametro invalido (`documento must contain digits`)
+- `404`: recurso nao encontrado (`File not found`, `Job not found`)
+- `500`: erro interno
+
+## Tunnels (acesso externo)
+
+Iniciar:
+
+```bash
+docker start etl_tunnel etl_grafana_tunnel
+```
+
+Pegar URL publica atual:
+
+```bash
+docker logs --tail=60 etl_tunnel
+docker logs --tail=60 etl_grafana_tunnel
+```
+
+Observacao: link `trycloudflare.com` muda quando o container reinicia.
+
+## Ambiente HML (isolado)
+
+Subir:
 
 ```bash
 docker compose -p etl-hml --env-file .env.hml -f docker-compose.hml.yml up -d --build
 docker compose -p etl-hml --env-file .env.hml -f docker-compose.hml.yml exec api alembic upgrade head
 ```
 
-Stop HML stack:
+Parar:
 
 ```bash
 docker compose -p etl-hml --env-file .env.hml -f docker-compose.hml.yml down
 ```
 
-HML URLs:
+URLs HML:
 
-| Service | URL |
+| Servico | URL |
 |---|---|
-| API | http://localhost:8100/docs |
+| API (Swagger) | http://localhost:8100/docs |
 | MinIO Console | http://localhost:9101 |
 | Prometheus | http://localhost:9190 |
 | Grafana | http://localhost:3100 |
 
-## Local Watcher (Windows)
+## Testes
 
 ```bash
-pip install -r requirements/local_watcher.txt
-python -m local_watcher.watcher --dir C:/path/to/alerts/volume
-```
-
-Map `alerts_data` volume to a Windows path in `docker-compose.yml`.
-
-## Entity Configuration
-
-Adjust these files for your actual business entity:
-
-- `worker/steps/validate.py`: `REQUIRED_COLUMNS`
-- `worker/steps/stage.py`: `STAGING_TABLE`
-- `worker/steps/upsert.py`: `FINAL_TABLE`, `CONFLICT_KEY`
-- create staging/final table migrations via Alembic
-
-## Tests
-
-```bash
-# Unit tests
+# unitarios
 pytest tests/unit/ -v
 
-# Integration tests (docker compose up)
+# integracao (com docker ativo)
 pytest tests/integration/ -v -m integration
 ```
+
+## Documentacao complementar
+
+- Guia detalhado de integracao: `docs/api-integracao.md`
