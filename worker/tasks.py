@@ -10,6 +10,7 @@ from worker.steps.clean import run_clean
 from worker.steps.enrich import run_enrich
 from worker.steps.extract import clear_cached_dataframe, run_extract
 from worker.steps.stage import run_stage
+from worker.steps.cnpj_verify import run_cnpj_verify
 from worker.steps.upsert import run_upsert
 from worker.steps.validate import run_validate
 
@@ -87,12 +88,17 @@ def run_etl(self, job_id: str | None, file_id: str | None):
             current_step = "upsert"
             run_upsert(session, job_id)
 
+            current_step = "cnpj_verify"
+            run_cnpj_verify(session, job_id)
+
             job.status = "DONE"
             job.finished_at = datetime.now(timezone.utc)
             etl_file.is_processed = True
             clear_cached_dataframe(job_id)
 
         except Exception as exc:
+            # Clear failed transaction state before persisting failure metadata.
+            session.rollback()
             mark_step_failed(session, job_id, current_step, str(exc))
 
             retry_count = self.request.retries
