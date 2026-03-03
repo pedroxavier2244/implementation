@@ -124,17 +124,25 @@ def run_cnpj_verify(session: Session, job_id: str) -> None:
     settings = get_settings()
     ttl_days = settings.CNPJ_CACHE_TTL_DAYS
     timeout = settings.BRASILAPI_TIMEOUT
+    batch_size = settings.CNPJ_VERIFY_BATCH_SIZE
 
     cnpjs = _get_cnpjs_for_job(session, job_id)
-    logger.info("cnpj_verify: %d CNPJs no job %s", len(cnpjs), job_id)
+    stale_cnpjs = [
+        cnpj for cnpj in cnpjs
+        if _is_stale(getattr(_get_cache(session, cnpj), "last_checked_at", None), ttl_days)
+    ]
+    total_stale = len(stale_cnpjs)
+    batch = stale_cnpjs[:batch_size]
+    logger.info(
+        "cnpj_verify: %d CNPJs no job %s — %d desatualizados, processando %d (batch_size=%d)",
+        len(cnpjs), job_id, total_stale, len(batch), batch_size,
+    )
 
     all_divergencias: list[CnpjDivergencia] = []
     checked = 0
 
-    for cnpj in cnpjs:
+    for cnpj in batch:
         cache = _get_cache(session, cnpj)
-        if not _is_stale(getattr(cache, "last_checked_at", None), ttl_days):
-            continue  # cache ainda valido
 
         try:
             rf_data = fetch_cnpj(cnpj, timeout=timeout)

@@ -57,7 +57,7 @@ def run_etl(self, job_id: str | None, file_id: str | None):
                 max_retries=3,
             )
             session.add(job)
-            session.flush()
+            session.commit()
             job_id = job.id
 
         job.status = "RUNNING"

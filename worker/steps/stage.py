@@ -7,8 +7,6 @@ from shared.visao_cliente_schema import STAGING_TABLE_NAME
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 from worker.steps.extract import get_cached_dataframe
 
-STAGING_TABLE = STAGING_TABLE_NAME
-
 
 def run_stage(session: Session, job_id: str) -> None:
     if is_step_done(session, job_id, "stage"):
@@ -20,7 +18,7 @@ def run_stage(session: Session, job_id: str) -> None:
         raise RuntimeError("No dataframe in cache")
 
     session.execute(
-        text(f"DELETE FROM {STAGING_TABLE} WHERE etl_job_id = :job_id"),
+        text(f"DELETE FROM {STAGING_TABLE_NAME} WHERE etl_job_id = :job_id"),
         {"job_id": job_id},
     )
 
@@ -28,7 +26,7 @@ def run_stage(session: Session, job_id: str) -> None:
     df_to_insert["etl_job_id"] = job_id
     df_to_insert["loaded_at"] = datetime.now(timezone.utc)
     df_to_insert.to_sql(
-        STAGING_TABLE,
+        STAGING_TABLE_NAME,
         con=session.get_bind(),
         if_exists="append",
         index=False,

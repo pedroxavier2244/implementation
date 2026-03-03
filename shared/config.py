@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # CNPJ Verification
     CNPJ_CACHE_TTL_DAYS: int = 30
     BRASILAPI_TIMEOUT: int = 10
+    CNPJ_VERIFY_BATCH_SIZE: int = 300  # max CNPJs verified per job run
 
     @property
     def database_url(self) -> str:

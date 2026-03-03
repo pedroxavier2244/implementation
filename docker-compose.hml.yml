@@ -65,7 +65,7 @@ services:
     build:
       context: .
       dockerfile: worker/Dockerfile
-    command: celery -A worker.celery_app worker -Q etl_jobs -c 2 --loglevel=info
+    command: celery -A worker.celery_app worker -Q etl_jobs -c 1 --loglevel=info
     env_file: .env.hml
     volumes:
       - alerts_data:/app/alerts
