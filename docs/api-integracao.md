@@ -111,6 +111,16 @@ GET /v1/jobs?status=DONE&limit=10&offset=0
 ### `GET /v1/alerts/{alert_id}`
 - Uso: consultar um alerta especifico.
 
+## Endpoints de CNPJ (`cnpj`)
+
+### `GET /v1/cnpj/{cnpj}`
+- Uso: consultar dados da Receita Federal por CNPJ.
+- Query params:
+  - `fallback_live` (opcional, padrao `true`)
+- Regra:
+  - Se existir em cache (`cnpj_rf_cache`), retorna cache.
+  - Se nao existir e `fallback_live=true`, consulta BrasilAPI em tempo real, salva no cache e retorna.
+
 ## Endpoint de Consulta de Dados (`data`)
 
 ### `GET /v1/data/visao-cliente`
@@ -119,12 +129,15 @@ GET /v1/jobs?status=DONE&limit=10&offset=0
   - `documento` (obrigatorio, com ou sem pontuacao)
   - `limit` (padrao `1`, max `500`)
   - `offset` (padrao `0`)
+  - `fallback_rf` (opcional, padrao `true`)
 - Regra:
   - A API remove pontuacao e compara apenas digitos.
   - O resultado vem ordenado por `data_base` decrescente.
   - No ETL, a consolidacao final e por `cd_cpf_cnpj_cliente`, mantendo sempre o registro mais recente por `data_base`.
   - Se houver duplicidade no mesmo arquivo, o ETL usa a linha com `data_base` mais nova.
   - Se houver duplicidade com dados ja existentes no banco, o ETL so atualiza quando a `data_base` recebida e mais recente (ou igual).
+  - Se nao houver registro local e o documento for CNPJ, a API busca automaticamente na Receita Federal (BrasilAPI), devolve no mesmo endpoint e grava cache em `cnpj_rf_cache`.
+  - O payload de `items` e padronizado com as mesmas chaves; quando um campo nao existir na origem ele retorna `null`.
 
 Exemplo:
 ```http
@@ -145,6 +158,48 @@ Exemplo de resposta:
       "nome_cliente": "LUG MATERIAL DE CONSTRUCAO LTDA"
     }
   ]
+}
+```
+
+## Endpoints de Analytics (`analytics`)
+
+Todos os indicadores possuem:
+- `GET /v1/analytics/{indicador}/summary`
+- `GET /v1/analytics/{indicador}/details`
+
+Indicadores disponiveis:
+- `contas-abertas`
+- `contas-qualificadas`
+- `instalacao-c6pay`
+- `qualificacao-c6pay`
+
+Query params comuns:
+- `period`: `daily | weekly | monthly`
+- `as_of`: `YYYY-MM-DD`
+- `limit` e `offset` (somente `details`)
+
+Regras oficiais de calculo:
+- `contas-abertas`: `SUM(Total de Contas Abertas)` da aba `Abertura` (Base Gerencial).
+- `contas-qualificadas`: `SUM(Contas Qualificadas)` da aba `Abertura` (Base Gerencial).
+- `instalacao-c6pay`: `SUM(Maquinas Vendidas Relacionamento)` da aba `Relacionamento` (Base Gerencial).
+- `qualificacao-c6pay`: `COUNT` em `final_visao_cliente` com:
+  `TIPO_PESSOA = PJ`, `STATUS_CC = LIBERADA`, `DT_INSTALL_MAQ >= as_of - 90 dias`,
+  `DT_CANCELAMENTO_MAQ vazio`, `TPV_M0 >= 5000`, `TPV_M1 < 5000`, `TPV_M2 < 5000`.
+
+Exemplo `summary`:
+```http
+GET /v1/analytics/contas-abertas/summary?period=monthly&as_of=2026-03-02
+```
+
+Exemplo de resposta:
+```json
+{
+  "indicator": "contas-abertas",
+  "period": "monthly",
+  "as_of": "2026-03-02",
+  "period_start": "2026-03-01",
+  "period_end": "2026-03-31",
+  "total": 1234
 }
 ```
 

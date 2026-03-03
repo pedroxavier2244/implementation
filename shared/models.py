@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, String, Boolean, Integer, Text, DateTime,
+    Column, String, Boolean, Integer, BigInteger, Text, DateTime,
     Date, ForeignKey, UniqueConstraint, Index, JSON
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -147,8 +147,23 @@ class CnpjDivergencia(Base):
     found_at = Column(DateTime(timezone=True), default=utcnow)
 
 
+class AnalyticsIndicatorSnapshot(Base):
+    __tablename__ = "analytics_indicator_snapshot"
+
+    indicator = Column(Text, primary_key=True)
+    reference_date = Column(Date, primary_key=True)
+    total = Column(BigInteger, nullable=False, default=0)
+    source_sheet = Column(Text)
+    source_column = Column(Text)
+    job_id = Column(String(36), ForeignKey("etl_job_run.id"), nullable=False)
+    file_id = Column(String(36), ForeignKey("etl_file.id"))
+    loaded_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 # Strategic indexes
 Index("idx_job_status",     EtlJobRun.status)
 Index("idx_job_file_id",    EtlJobRun.file_id)
 Index("idx_alert_severity", AlertEvent.severity)
 Index("idx_file_date",      EtlFile.file_date)
+Index("idx_analytics_snapshot_reference_date", AnalyticsIndicatorSnapshot.reference_date)
+Index("idx_analytics_snapshot_file_id", AnalyticsIndicatorSnapshot.file_id)

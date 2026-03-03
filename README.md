@@ -75,6 +75,9 @@ Regra de consolidacao:
 ### Dados (`/v1/data`)
 
 - `GET /v1/data/visao-cliente?documento=<cpf_ou_cnpj>&limit=1&offset=0`
+  - Parametro opcional: `fallback_rf=true|false` (padrao `true`).
+  - Regra: se nao encontrar no banco local e o documento for CNPJ (14 digitos), consulta Receita Federal via BrasilAPI.
+  - O JSON de retorno e padronizado com o mesmo conjunto de chaves (campos ausentes retornam `null`).
 
 ### Analytics (`/v1/analytics`)
 
@@ -95,6 +98,15 @@ Parametros comuns:
 - `as_of`: data de referencia (`YYYY-MM-DD`)
 - `limit` e `offset` (somente em `details`)
 
+Regras de calculo em producao:
+
+- `contas-abertas`: `SUM(Total de Contas Abertas)` da aba `Abertura` (Base Gerencial).
+- `contas-qualificadas`: `SUM(Contas Qualificadas)` da aba `Abertura` (Base Gerencial).
+- `instalacao-c6pay`: `SUM(Maquinas Vendidas Relacionamento)` da aba `Relacionamento` (Base Gerencial).
+- `qualificacao-c6pay`: `COUNT` na tabela `final_visao_cliente` com:
+  `TIPO_PESSOA = PJ`, `STATUS_CC = LIBERADA`, `DT_INSTALL_MAQ >= as_of - 90 dias`,
+  `DT_CANCELAMENTO_MAQ vazio`, `TPV_M0 >= 5000`, `TPV_M1 < 5000`, `TPV_M2 < 5000`.
+
 Exemplo:
 
 ```bash
@@ -110,6 +122,8 @@ curl "http://localhost:8000/v1/analytics/contas-abertas/summary?period=monthly&a
 
 - `GET /v1/cnpj/divergencias/list`
 - `GET /v1/cnpj/{cnpj}`
+  - Parametro opcional: `fallback_live=true|false` (padrao `true`).
+  - Regra: se nao existir no cache local, consulta Receita Federal via BrasilAPI e grava cache.
 
 ## Contratos JSON (request/response)
 

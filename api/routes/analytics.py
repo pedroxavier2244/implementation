@@ -1,22 +1,14 @@
-from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Literal
 
 from fastapi import APIRouter, Query
 from sqlalchemy import text
 
 from api.schemas.analytics import IndicatorDetailsOut, IndicatorSummaryOut, PeriodType
+from shared.analytics_snapshot_schema import SNAPSHOT_INDICATORS, TABLE_NAME as SNAPSHOT_TABLE_NAME
 from shared.db import get_db_session
 from shared.visao_cliente_schema import FINAL_TABLE_NAME
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
-
-
-@dataclass(frozen=True)
-class IndicatorConfig:
-    name: str
-    date_column: str
-    where_sql: str
 
 
 def _date_expr(column: str) -> str:
@@ -54,7 +46,6 @@ def _period_bounds(period: PeriodType, as_of: date) -> tuple[date, date]:
         end = start + timedelta(days=6)
         return start, end
 
-    # monthly
     start = as_of.replace(day=1)
     if start.month == 12:
         next_month = start.replace(year=start.year + 1, month=1, day=1)
@@ -69,57 +60,34 @@ COMMON_PJ_LIBERADA = """
     AND UPPER(BTRIM(COALESCE(status_cc, ''))) = 'LIBERADA'
 """
 
-QUALIFIED_FLAG_SQL = """
-    (
-        regexp_replace(BTRIM(COALESCE(fl_qualificado_comiss, '')), '[^0-9]', '', 'g') = '1'
-        OR UPPER(BTRIM(COALESCE(fl_qualificado_comiss, ''))) IN ('SIM', 'TRUE')
-    )
+QUALIFICACAO_C6PAY_WHERE_SQL = f"""
+    {COMMON_PJ_LIBERADA}
+    AND NULLIF(BTRIM(COALESCE(dt_cancelamento_maq, '')), '') IS NULL
+    AND COALESCE({_numeric_expr('tpv_m0')}, 0) >= 5000
+    AND COALESCE({_numeric_expr('tpv_m1')}, 0) < 5000
+    AND COALESCE({_numeric_expr('tpv_m2')}, 0) < 5000
+    AND {_date_expr('dt_install_maq')} >= :instalacao_limite
 """
 
-INDICATORS = {
-    "contas-abertas": IndicatorConfig(
-        name="contas-abertas",
-        date_column="dt_conta_criada",
-        where_sql=COMMON_PJ_LIBERADA,
-    ),
-    "qualificacao-c6pay": IndicatorConfig(
-        name="qualificacao-c6pay",
-        date_column="dt_install_maq",
-        where_sql=f"""
-            {COMMON_PJ_LIBERADA}
-            AND NULLIF(BTRIM(COALESCE(dt_cancelamento_maq, '')), '') IS NULL
-            AND COALESCE({_numeric_expr('tpv_m0')}, 0) >= 5000
-        """,
-    ),
-    "instalacao-c6pay": IndicatorConfig(
-        name="instalacao-c6pay",
-        date_column="dt_install_maq",
-        where_sql=COMMON_PJ_LIBERADA,
-    ),
-    "contas-qualificadas": IndicatorConfig(
-        name="contas-qualificadas",
-        date_column="data_base",
-        where_sql=QUALIFIED_FLAG_SQL,
-    ),
-}
 
-
-def _summary_payload(indicator: str, period: PeriodType, as_of: date):
-    config = INDICATORS[indicator]
+def _summary_snapshot_payload(indicator: str, period: PeriodType, as_of: date) -> IndicatorSummaryOut:
     period_start, period_end = _period_bounds(period, as_of)
-    date_sql = _date_expr(config.date_column)
-
     query = text(
         f"""
-        SELECT COUNT(*)::int AS total
-        FROM {FINAL_TABLE_NAME}
-        WHERE {config.where_sql}
-          AND {date_sql} BETWEEN :period_start AND :period_end
+        SELECT COALESCE(SUM(total), 0)::bigint AS total
+        FROM {SNAPSHOT_TABLE_NAME}
+        WHERE indicator = :indicator
+          AND reference_date BETWEEN :period_start AND :period_end
         """
     )
-
     with get_db_session() as session:
-        total = int(session.execute(query, {"period_start": period_start, "period_end": period_end}).scalar() or 0)
+        total = int(
+            session.execute(
+                query,
+                {"indicator": indicator, "period_start": period_start, "period_end": period_end},
+            ).scalar()
+            or 0
+        )
 
     return IndicatorSummaryOut(
         indicator=indicator,
@@ -131,28 +99,131 @@ def _summary_payload(indicator: str, period: PeriodType, as_of: date):
     )
 
 
-def _details_payload(indicator: str, period: PeriodType, as_of: date, limit: int, offset: int):
-    config = INDICATORS[indicator]
+def _details_snapshot_payload(
+    indicator: str,
+    period: PeriodType,
+    as_of: date,
+    limit: int,
+    offset: int,
+) -> IndicatorDetailsOut:
     period_start, period_end = _period_bounds(period, as_of)
-    date_sql = _date_expr(config.date_column)
+    sum_query = text(
+        f"""
+        SELECT COALESCE(SUM(total), 0)::bigint AS total
+        FROM {SNAPSHOT_TABLE_NAME}
+        WHERE indicator = :indicator
+          AND reference_date BETWEEN :period_start AND :period_end
+        """
+    )
+    rows_query = text(
+        f"""
+        SELECT
+            indicator,
+            reference_date,
+            total,
+            source_sheet,
+            source_column,
+            file_id,
+            job_id,
+            loaded_at
+        FROM {SNAPSHOT_TABLE_NAME}
+        WHERE indicator = :indicator
+          AND reference_date BETWEEN :period_start AND :period_end
+        ORDER BY reference_date DESC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+
+    with get_db_session() as session:
+        total = int(
+            session.execute(
+                sum_query,
+                {"indicator": indicator, "period_start": period_start, "period_end": period_end},
+            ).scalar()
+            or 0
+        )
+        rows = session.execute(
+            rows_query,
+            {
+                "indicator": indicator,
+                "period_start": period_start,
+                "period_end": period_end,
+                "limit": limit,
+                "offset": offset,
+            },
+        ).mappings().all()
+
+    return IndicatorDetailsOut(
+        indicator=indicator,
+        period=period,
+        as_of=as_of,
+        period_start=period_start,
+        period_end=period_end,
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[dict(row) for row in rows],
+    )
+
+
+def _summary_qualificacao_c6pay_payload(period: PeriodType, as_of: date) -> IndicatorSummaryOut:
+    period_start, period_end = _period_bounds(period, as_of)
+    instalacao_limite = as_of - timedelta(days=90)
+    data_base_sql = _date_expr("data_base")
+
+    query = text(
+        f"""
+        SELECT COUNT(*)::int AS total
+        FROM {FINAL_TABLE_NAME}
+        WHERE {QUALIFICACAO_C6PAY_WHERE_SQL}
+          AND {data_base_sql} BETWEEN :period_start AND :period_end
+        """
+    )
+    with get_db_session() as session:
+        total = int(
+            session.execute(
+                query,
+                {
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "instalacao_limite": instalacao_limite,
+                },
+            ).scalar()
+            or 0
+        )
+
+    return IndicatorSummaryOut(
+        indicator="qualificacao-c6pay",
+        period=period,
+        as_of=as_of,
+        period_start=period_start,
+        period_end=period_end,
+        total=total,
+    )
+
+
+def _details_qualificacao_c6pay_payload(period: PeriodType, as_of: date, limit: int, offset: int) -> IndicatorDetailsOut:
+    period_start, period_end = _period_bounds(period, as_of)
+    instalacao_limite = as_of - timedelta(days=90)
+    data_base_sql = _date_expr("data_base")
 
     query = text(
         f"""
         SELECT *, COUNT(*) OVER() AS __total
         FROM {FINAL_TABLE_NAME}
-        WHERE {config.where_sql}
-          AND {date_sql} BETWEEN :period_start AND :period_end
-        ORDER BY {date_sql} DESC NULLS LAST, data_base DESC NULLS LAST
+        WHERE {QUALIFICACAO_C6PAY_WHERE_SQL}
+          AND {data_base_sql} BETWEEN :period_start AND :period_end
+        ORDER BY {data_base_sql} DESC NULLS LAST, data_base DESC NULLS LAST
         LIMIT :limit OFFSET :offset
         """
     )
-
     with get_db_session() as session:
         rows = session.execute(
             query,
             {
                 "period_start": period_start,
                 "period_end": period_end,
+                "instalacao_limite": instalacao_limite,
                 "limit": limit,
                 "offset": offset,
             },
@@ -166,7 +237,7 @@ def _details_payload(indicator: str, period: PeriodType, as_of: date, limit: int
         items.append(item)
 
     return IndicatorDetailsOut(
-        indicator=indicator,
+        indicator="qualificacao-c6pay",
         period=period,
         as_of=as_of,
         period_start=period_start,
@@ -176,6 +247,18 @@ def _details_payload(indicator: str, period: PeriodType, as_of: date, limit: int
         offset=offset,
         items=items,
     )
+
+
+def _summary_payload(indicator: str, period: PeriodType, as_of: date):
+    if indicator in SNAPSHOT_INDICATORS:
+        return _summary_snapshot_payload(indicator, period, as_of)
+    return _summary_qualificacao_c6pay_payload(period, as_of)
+
+
+def _details_payload(indicator: str, period: PeriodType, as_of: date, limit: int, offset: int):
+    if indicator in SNAPSHOT_INDICATORS:
+        return _details_snapshot_payload(indicator, period, as_of, limit, offset)
+    return _details_qualificacao_c6pay_payload(period, as_of, limit, offset)
 
 
 def _as_of_date(as_of: date | None) -> date:
