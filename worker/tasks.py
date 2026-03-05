@@ -9,6 +9,7 @@ from worker.steps.checkpoint import mark_step_failed
 from worker.steps.clean import run_clean
 from worker.steps.enrich import run_enrich
 from worker.steps.extract import clear_cached_dataframe, run_extract
+from worker.steps.analytics_snapshot import run_analytics_snapshot
 from worker.steps.stage import run_stage
 from worker.steps.cnpj_verify import run_cnpj_verify
 from worker.steps.upsert import run_upsert
@@ -87,6 +88,9 @@ def run_etl(self, job_id: str | None, file_id: str | None):
 
             current_step = "upsert"
             run_upsert(session, job_id)
+
+            current_step = "analytics_snapshot"
+            run_analytics_snapshot(session, job_id, etl_file)
 
             current_step = "cnpj_verify"
             run_cnpj_verify(session, job_id)

@@ -7,6 +7,8 @@ def test_run_etl_marks_job_done_on_success():
     ) as mock_validate, patch("worker.tasks.run_clean") as mock_clean, patch("worker.tasks.run_enrich") as mock_enrich, patch(
         "worker.tasks.run_stage"
     ) as mock_stage, patch("worker.tasks.run_upsert") as mock_upsert, patch(
+        "worker.tasks.run_analytics_snapshot"
+    ) as mock_analytics_snapshot, patch(
         "worker.tasks.run_cnpj_verify"
     ) as mock_cnpj_verify:
         mock_session = MagicMock()
@@ -30,6 +32,7 @@ def test_run_etl_marks_job_done_on_success():
         mock_enrich.assert_called_once()
         mock_stage.assert_called_once()
         mock_upsert.assert_called_once()
+        mock_analytics_snapshot.assert_called_once()
         mock_cnpj_verify.assert_called_once()
 
 
@@ -48,6 +51,8 @@ def test_run_etl_rolls_back_session_before_marking_failure():
         "worker.tasks.run_validate"
     ) as mock_validate, patch("worker.tasks.run_stage") as mock_stage, patch(
         "worker.tasks.run_upsert", side_effect=RuntimeError("upsert failed")
+    ), patch("worker.tasks.run_analytics_snapshot") as mock_analytics_snapshot, patch(
+        "worker.tasks.run_cnpj_verify"
     ), patch("worker.tasks.mark_step_failed") as mock_mark_step_failed:
         mock_session = MagicMock()
         mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
@@ -75,5 +80,6 @@ def test_run_etl_rolls_back_session_before_marking_failure():
         mock_enrich.assert_called_once()
         mock_validate.assert_called_once()
         mock_stage.assert_called_once()
+        mock_analytics_snapshot.assert_not_called()
         mock_session.rollback.assert_called_once()
         mock_mark_step_failed.assert_called_once_with(mock_session, "job-1", "upsert", "upsert failed")

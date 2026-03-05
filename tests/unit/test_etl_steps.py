@@ -123,6 +123,59 @@ def test_enrich_computes_additional_business_columns():
     assert row["nivel_cartao"] == "Alto"
     assert row["nivel_conta"] == "Medio"
     assert row["ja_recebeu_comissao"] == "SIM"
-    assert row["comissao_prox_mes"] == "NAO"
+    assert row["comissao_prox_mes"] == "NÃO"
     assert row["status_qualificacao"] == "D - Topo atingido"
     assert row["faixa_alvo"] == "MAX"
+
+
+def test_analytics_snapshot_calculates_and_upserts_required_metrics():
+    workbook = {
+        "Abertura": pd.DataFrame(
+            {
+                "Total de Contas Abertas": ["10", "20"],
+                "Contas Qualificadas": ["3", "7"],
+            }
+        ),
+        "Relacionamento": pd.DataFrame({"Maquinas Vendidas Relacionamento": ["2", "3"]}),
+    }
+    session = MagicMock()
+    etl_file = MagicMock()
+    etl_file.id = "file-1"
+    etl_file.file_date = pd.Timestamp("2026-03-02").date()
+
+    with patch("worker.steps.analytics_snapshot.is_step_done", return_value=False), patch(
+        "worker.steps.analytics_snapshot.begin_step"
+    ), patch("worker.steps.analytics_snapshot.get_cached_workbook", return_value=workbook), patch(
+        "worker.steps.analytics_snapshot.mark_step_done"
+    ) as mock_mark_done:
+        from worker.steps.analytics_snapshot import run_analytics_snapshot
+
+        run_analytics_snapshot(session, "job-1", etl_file)
+
+    assert session.execute.call_count == 3
+    rows = [call.args[1] for call in session.execute.call_args_list]
+    totals = {row["indicator"]: row["total"] for row in rows}
+
+    assert totals["contas-abertas"] == 30
+    assert totals["contas-qualificadas"] == 10
+    assert totals["instalacao-c6pay"] == 5
+    mock_mark_done.assert_called_once()
+
+
+def test_analytics_snapshot_raises_if_required_column_is_missing():
+    workbook = {
+        "Abertura": pd.DataFrame({"Coluna X": [1]}),
+        "Relacionamento": pd.DataFrame({"Maquinas Vendidas Relacionamento": [1]}),
+    }
+    session = MagicMock()
+    etl_file = MagicMock()
+    etl_file.id = "file-1"
+    etl_file.file_date = pd.Timestamp("2026-03-02").date()
+
+    with patch("worker.steps.analytics_snapshot.is_step_done", return_value=False), patch(
+        "worker.steps.analytics_snapshot.begin_step"
+    ), patch("worker.steps.analytics_snapshot.get_cached_workbook", return_value=workbook):
+        from worker.steps.analytics_snapshot import run_analytics_snapshot
+
+        with pytest.raises(ValueError, match="Total de Contas Abertas"):
+            run_analytics_snapshot(session, "job-1", etl_file)

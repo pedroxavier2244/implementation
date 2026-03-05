@@ -4,12 +4,37 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
-from api.schemas.data import VisaoClienteSearchOut
+from api.schemas.data import SnapshotItem, VisaoClienteHistoricoOut, VisaoClienteSearchOut
 from shared.brasilapi import fetch_cnpj
 from shared.config import get_settings
 from shared.db import get_db_session
 from shared.models import CnpjRfCache
-from shared.visao_cliente_schema import FINAL_TABLE_NAME, REQUIRED_COLUMNS
+from shared.visao_cliente_schema import FINAL_TABLE_NAME, REQUIRED_COLUMNS, STAGING_TABLE_NAME
+
+_DIFF_IGNORE_FIELDS = frozenset({"etl_job_id", "loaded_at", "__total"})
+
+
+def _compute_diff(
+    anterior: dict | None, atual: dict
+) -> dict[str, dict[str, str | None]] | None:
+    """Returns fields that changed between two snapshots. None if it's the first snapshot."""
+    if anterior is None:
+        return None
+    diff = {}
+    for key, val_atual in atual.items():
+        if key in _DIFF_IGNORE_FIELDS:
+            continue
+        val_anterior = anterior.get(key)
+        # Ignore fields where both are None
+        if val_anterior is None and val_atual is None:
+            continue
+        if str(val_anterior) != str(val_atual):
+            diff[key] = {
+                "de": str(val_anterior) if val_anterior is not None else None,
+                "para": str(val_atual) if val_atual is not None else None,
+            }
+    return diff if diff else None
+
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -208,4 +233,57 @@ def get_visao_cliente_by_documento(
         limit=limit,
         offset=offset,
         items=sanitized_rows,
+    )
+
+
+@router.get("/visao-cliente/historico", response_model=VisaoClienteHistoricoOut)
+def get_visao_cliente_historico(
+    documento: str = Query(..., description="CPF/CNPJ com ou sem pontuacao"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    documento_consultado = _only_digits(documento)
+    if not documento_consultado:
+        raise HTTPException(status_code=400, detail="documento must contain digits")
+
+    with get_db_session() as session:
+        rows = session.execute(
+            text(
+                f"""
+                SELECT *, COUNT(*) OVER() AS __total
+                FROM {STAGING_TABLE_NAME}
+                WHERE cd_cpf_cnpj_cliente = :documento
+                ORDER BY data_base ASC NULLS LAST, loaded_at ASC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {"documento": documento_consultado, "limit": limit, "offset": offset},
+        ).mappings().all()
+
+    total = int(rows[0]["__total"]) if rows else 0
+
+    snapshots = []
+    anterior: dict | None = None
+    for row in rows:
+        row_dict = dict(row)
+        row_dict.pop("__total", None)
+
+        diff = _compute_diff(anterior, row_dict)
+        dados = {k: v for k, v in row_dict.items() if k not in ("etl_job_id", "loaded_at")}
+
+        snapshots.append(SnapshotItem(
+            data_base=row_dict.get("data_base"),
+            carregado_em=row_dict.get("loaded_at"),
+            etl_job_id=str(row_dict["etl_job_id"]) if row_dict.get("etl_job_id") else None,
+            campos_alterados=diff,
+            dados=dados,
+        ))
+        anterior = row_dict
+
+    return VisaoClienteHistoricoOut(
+        documento_consultado=documento_consultado,
+        total_snapshots=total,
+        limit=limit,
+        offset=offset,
+        snapshots=snapshots,
     )
