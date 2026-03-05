@@ -78,6 +78,10 @@ Regra de consolidacao:
   - Parametro opcional: `fallback_rf=true|false` (padrao `true`).
   - Regra: se nao encontrar no banco local e o documento for CNPJ (14 digitos), consulta Receita Federal via BrasilAPI.
   - O JSON de retorno e padronizado com o mesmo conjunto de chaves (campos ausentes retornam `null`).
+- `GET /v1/data/visao-cliente/historico?documento=<cpf_ou_cnpj>&limit=50&offset=0`
+  - Retorna linha do tempo cronologica de snapshots do CNPJ/CPF.
+  - Cada snapshot inclui `campos_alterados` com diff em relacao a anterior (null na primeira).
+  - Ordenado por `data_base` ASC (mais antigo primeiro).
 
 ### Analytics (`/v1/analytics`)
 
