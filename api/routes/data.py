@@ -11,6 +11,31 @@ from shared.db import get_db_session
 from shared.models import CnpjRfCache
 from shared.visao_cliente_schema import FINAL_TABLE_NAME, REQUIRED_COLUMNS
 
+_DIFF_IGNORE_FIELDS = frozenset({"etl_job_id", "loaded_at", "__total"})
+
+
+def _compute_diff(
+    anterior: dict | None, atual: dict
+) -> dict[str, dict[str, str]] | None:
+    """Returns fields that changed between two snapshots. None if it's the first snapshot."""
+    if anterior is None:
+        return None
+    diff = {}
+    for key, val_atual in atual.items():
+        if key in _DIFF_IGNORE_FIELDS:
+            continue
+        val_anterior = anterior.get(key)
+        # Ignore fields where both are None
+        if val_anterior is None and val_atual is None:
+            continue
+        if str(val_anterior) != str(val_atual):
+            diff[key] = {
+                "de": str(val_anterior) if val_anterior is not None else None,
+                "para": str(val_atual) if val_atual is not None else None,
+            }
+    return diff
+
+
 router = APIRouter(prefix="/data", tags=["data"])
 
 RF_FINAL_COLUMNS = (
