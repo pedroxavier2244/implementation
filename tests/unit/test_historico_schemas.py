@@ -34,3 +34,15 @@ def test_historico_out_structure():
     )
     assert out.total_snapshots == 0
     assert out.snapshots == []
+
+
+def test_snapshot_item_requires_dados():
+    import pytest
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        SnapshotItem(
+            data_base="2026-01-01",
+            carregado_em=None,
+            etl_job_id=None,
+            campos_alterados=None,
+        )
