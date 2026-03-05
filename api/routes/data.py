@@ -9,7 +9,7 @@ from shared.brasilapi import fetch_cnpj
 from shared.config import get_settings
 from shared.db import get_db_session
 from shared.models import CnpjRfCache
-from shared.visao_cliente_schema import FINAL_TABLE_NAME, REQUIRED_COLUMNS
+from shared.visao_cliente_schema import FINAL_TABLE_NAME, REQUIRED_COLUMNS, STAGING_TABLE_NAME
 
 _DIFF_IGNORE_FIELDS = frozenset({"etl_job_id", "loaded_at", "__total"})
 
@@ -242,8 +242,6 @@ def get_visao_cliente_historico(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    from shared.visao_cliente_schema import STAGING_TABLE_NAME
-
     documento_consultado = _only_digits(documento)
     if not documento_consultado:
         raise HTTPException(status_code=400, detail="documento must contain digits")
