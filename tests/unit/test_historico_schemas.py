@@ -74,3 +74,76 @@ def test_compute_diff_first_snapshot_returns_none():
 
     result = _compute_diff(None, {"nome_cliente": "ABC"})
     assert result is None
+
+
+def test_get_historico_returns_snapshots_with_diff():
+    from unittest.mock import patch, MagicMock
+    from fastapi.testclient import TestClient
+
+    cnpj = "12345678000190"
+    row1 = {
+        "cd_cpf_cnpj_cliente": cnpj,
+        "data_base": "2026-02-02",
+        "loaded_at": "2026-03-03T10:00:00+00:00",
+        "etl_job_id": "job-1",
+        "nome_cliente": "EMPRESA LTDA",
+        "vl_cash_in_mtd": "3000",
+        "__total": 2,
+    }
+    row2 = {
+        "cd_cpf_cnpj_cliente": cnpj,
+        "data_base": "2026-02-21",
+        "loaded_at": "2026-03-01T15:00:00+00:00",
+        "etl_job_id": "job-2",
+        "nome_cliente": "EMPRESA LTDA",
+        "vl_cash_in_mtd": "8500",
+        "__total": 2,
+    }
+
+    mock_result = MagicMock()
+    mock_result.mappings.return_value.all.return_value = [row1, row2]
+
+    mock_session = MagicMock()
+    mock_session.execute.return_value = mock_result
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+
+    with patch("api.routes.data.get_db_session", return_value=mock_session):
+        from api.main import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+        response = client.get(f"/v1/data/visao-cliente/historico?documento={cnpj}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_snapshots"] == 2
+    assert len(body["snapshots"]) == 2
+    assert body["snapshots"][0]["campos_alterados"] is None
+    diff = body["snapshots"][1]["campos_alterados"]
+    assert diff is not None
+    assert diff["vl_cash_in_mtd"]["de"] == "3000"
+    assert diff["vl_cash_in_mtd"]["para"] == "8500"
+
+
+def test_get_historico_returns_empty_for_unknown_cnpj():
+    from unittest.mock import patch, MagicMock
+    from fastapi.testclient import TestClient
+
+    mock_result = MagicMock()
+    mock_result.mappings.return_value.all.return_value = []
+
+    mock_session = MagicMock()
+    mock_session.execute.return_value = mock_result
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+
+    with patch("api.routes.data.get_db_session", return_value=mock_session):
+        from api.main import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+        response = client.get("/v1/data/visao-cliente/historico?documento=99999999000199")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_snapshots"] == 0
+    assert body["snapshots"] == []

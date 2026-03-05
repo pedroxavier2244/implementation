@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
-from api.schemas.data import VisaoClienteSearchOut
+from api.schemas.data import SnapshotItem, VisaoClienteHistoricoOut, VisaoClienteSearchOut
 from shared.brasilapi import fetch_cnpj
 from shared.config import get_settings
 from shared.db import get_db_session
@@ -233,4 +233,59 @@ def get_visao_cliente_by_documento(
         limit=limit,
         offset=offset,
         items=sanitized_rows,
+    )
+
+
+@router.get("/visao-cliente/historico", response_model=VisaoClienteHistoricoOut)
+def get_visao_cliente_historico(
+    documento: str = Query(..., description="CPF/CNPJ com ou sem pontuacao"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    from shared.visao_cliente_schema import STAGING_TABLE_NAME
+
+    documento_consultado = _only_digits(documento)
+    if not documento_consultado:
+        raise HTTPException(status_code=400, detail="documento must contain digits")
+
+    with get_db_session() as session:
+        rows = session.execute(
+            text(
+                f"""
+                SELECT *, COUNT(*) OVER() AS __total
+                FROM {STAGING_TABLE_NAME}
+                WHERE cd_cpf_cnpj_cliente = :documento
+                ORDER BY data_base ASC NULLS LAST, loaded_at ASC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {"documento": documento_consultado, "limit": limit, "offset": offset},
+        ).mappings().all()
+
+    total = int(rows[0]["__total"]) if rows else 0
+
+    snapshots = []
+    anterior: dict | None = None
+    for row in rows:
+        row_dict = dict(row)
+        row_dict.pop("__total", None)
+
+        diff = _compute_diff(anterior, row_dict)
+        dados = {k: v for k, v in row_dict.items() if k not in ("etl_job_id", "loaded_at")}
+
+        snapshots.append(SnapshotItem(
+            data_base=row_dict.get("data_base"),
+            carregado_em=row_dict.get("loaded_at"),
+            etl_job_id=str(row_dict["etl_job_id"]) if row_dict.get("etl_job_id") else None,
+            campos_alterados=diff,
+            dados=dados,
+        ))
+        anterior = row_dict
+
+    return VisaoClienteHistoricoOut(
+        documento_consultado=documento_consultado,
+        total_snapshots=total,
+        limit=limit,
+        offset=offset,
+        snapshots=snapshots,
     )
