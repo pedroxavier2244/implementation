@@ -176,10 +176,10 @@ def _compute_status_columns(dataframe):
     ja_pago = _coerce_numeric(dataframe["ja_pago_comiss"]).fillna(0)
     previsao = _coerce_numeric(dataframe["previsao_comiss"]).fillna(0)
 
-    # Excel: =IF([@JA_PAGO_COMISS]>0,"SIM","Nao")  — nota: "Nao" com N maiusculo
-    ja_recebeu = np.where(ja_pago > 0, "SIM", "Nao")
-    # Excel: =IF([@PREVISAO_COMISS]>0,"SIM","NAO")  — "NAO" tudo maiusculo
-    prox_mes = np.where(previsao > 0, "SIM", "NAO")
+    # Excel: =IF([@JA_PAGO_COMISS]>0,"SIM","Não")  — nota: "Não" com til
+    ja_recebeu = np.where(ja_pago > 0, "SIM", "Não")
+    # Excel: =IF([@PREVISAO_COMISS]>0,"SIM","NÃO")  — "NÃO" tudo maiusculo com til
+    prox_mes = np.where(previsao > 0, "SIM", "NÃO")
     dataframe["ja_recebeu_comissao"] = ja_recebeu
     dataframe["comissao_prox_mes"] = prox_mes
 
@@ -187,15 +187,15 @@ def _compute_status_columns(dataframe):
     is_max = faixa_alvo == "MAX"
 
     status = np.where(
-        (ja_recebeu == "Nao") & (prox_mes == "NAO"),
+        (ja_recebeu == "Não") & (prox_mes == "NÃO"),
         "A - Nunca qualificou",
         np.where(
-            (ja_recebeu == "Nao") & (prox_mes == "SIM"),
-            "B - Primeira qualificacao",
+            (ja_recebeu == "Não") & (prox_mes == "SIM"),
+            "B - Primeira qualificação",
             np.where(
                 (ja_recebeu == "SIM") & (prox_mes == "SIM"),
-                "C - Qualificacao recorrente",
-                np.where(is_max, "D - Topo atingido", "E - Perdeu qualificacao"),
+                "C - Qualificação recorrente",
+                np.where(is_max, "D - Topo atingido", "E - Perdeu qualificação"),
             ),
         ),
     )
