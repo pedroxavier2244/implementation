@@ -16,7 +16,7 @@ _DIFF_IGNORE_FIELDS = frozenset({"etl_job_id", "loaded_at", "__total"})
 
 def _compute_diff(
     anterior: dict | None, atual: dict
-) -> dict[str, dict[str, str]] | None:
+) -> dict[str, dict[str, str | None]] | None:
     """Returns fields that changed between two snapshots. None if it's the first snapshot."""
     if anterior is None:
         return None
@@ -33,7 +33,7 @@ def _compute_diff(
                 "de": str(val_anterior) if val_anterior is not None else None,
                 "para": str(val_atual) if val_atual is not None else None,
             }
-    return diff
+    return diff if diff else None
 
 
 router = APIRouter(prefix="/data", tags=["data"])

@@ -66,9 +66,7 @@ def test_compute_diff_ignores_metadata_fields():
     anterior = {"etl_job_id": "job-1", "loaded_at": "2026-01-01", "nome_cliente": "ABC"}
     atual = {"etl_job_id": "job-2", "loaded_at": "2026-02-01", "nome_cliente": "ABC"}
     diff = _compute_diff(anterior, atual)
-    assert "etl_job_id" not in diff
-    assert "loaded_at" not in diff
-    assert diff == {}
+    assert diff is None
 
 
 def test_compute_diff_first_snapshot_returns_none():
