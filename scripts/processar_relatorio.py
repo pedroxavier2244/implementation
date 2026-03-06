@@ -141,7 +141,7 @@ def processar(input_path: str) -> str:
     stem = input_path.stem
     output_path = input_path.parent / f"{stem} (processado).xlsx"
     print(f"Salvando: {output_path.name}")
-    df.to_excel(output_path, sheet_name=SHEET_NAME, index=False)
+    df.to_excel(output_path, sheet_name=SHEET_NAME, index=False, engine="xlsxwriter")
     print(f"Concluido: {output_path}")
     return str(output_path)
 
