@@ -6,3 +6,6 @@ pytest-asyncio==0.24.0
 pytest-mock==3.14.0
 httpx==0.28.1
 factory-boy==3.3.1
+testcontainers[postgres]==4.14.1
+fakeredis==2.34.1
+moto[s3]==5.1.22
