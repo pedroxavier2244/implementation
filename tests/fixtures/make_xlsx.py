@@ -1,6 +1,6 @@
 """
 Gera um arquivo .xlsx mínimo válido para o pipeline ETL.
-Inclui as 3 abas necessárias: Visão Cliente, Abertura, Relacionamento.
+Inclui apenas a aba "Visão Cliente".
 """
 import io
 from datetime import date
@@ -98,27 +98,17 @@ def _row_values(reference_date: date) -> list:
 
 
 def make_test_xlsx(reference_date: date | None = None) -> bytes:
-    """Gera bytes de um xlsx válido com as 3 abas requeridas."""
+    """Gera bytes de um xlsx válido com a aba Visão Cliente."""
     if reference_date is None:
         reference_date = date(2026, 2, 21)
 
     wb = openpyxl.Workbook()
 
-    # ── Aba 1: Visão Cliente ──────────────────────────────────────────────────
+    # ── Aba: Visão Cliente ────────────────────────────────────────────────────
     ws_vc = wb.active
     ws_vc.title = "Visão Cliente"
     ws_vc.append(VISAO_CLIENTE_HEADERS)
     ws_vc.append(_row_values(reference_date))
-
-    # ── Aba 2: Abertura ───────────────────────────────────────────────────────
-    ws_ab = wb.create_sheet("Abertura")
-    ws_ab.append(["Total de Contas Abertas", "Contas Qualificadas"])
-    ws_ab.append([5, 3])
-
-    # ── Aba 3: Relacionamento ─────────────────────────────────────────────────
-    ws_rel = wb.create_sheet("Relacionamento")
-    ws_rel.append(["Maquinas Vendidas Relacionamento"])
-    ws_rel.append([2])
 
     buf = io.BytesIO()
     wb.save(buf)

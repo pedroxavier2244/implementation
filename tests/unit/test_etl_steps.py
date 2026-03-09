@@ -129,23 +129,28 @@ def test_enrich_computes_additional_business_columns():
 
 
 def test_analytics_snapshot_calculates_and_upserts_required_metrics():
-    workbook = {
-        "Abertura": pd.DataFrame(
-            {
-                "Total de Contas Abertas": ["10", "20"],
-                "Contas Qualificadas": ["3", "7"],
-            }
-        ),
-        "Relacionamento": pd.DataFrame({"Maquinas Vendidas Relacionamento": ["2", "3"]}),
-    }
+    ref_date = pd.Timestamp("2026-03-02").date()
+    dataframe = pd.DataFrame(
+        {
+            # 2 rows PJ + LIBERADA + dt_conta_criada in March 2026 → contas-abertas = 2
+            # 1 row PJ + LIBERADA + ja_pago_comiss > 0 → contas-qualificadas = 1
+            # 1 row with dt_install_maq in March 2026 → instalacao-c6pay = 1
+            "tipo_pessoa": ["PJ", "PJ", "PF", "PJ"],
+            "status_cc": ["LIBERADA", "LIBERADA", "LIBERADA", "LIBERADA"],
+            "dt_conta_criada": ["2026-03-10", "2026-03-15", "2026-03-01", "2026-01-01"],
+            "ja_pago_comiss": [100, 0, 0, 0],
+            "previsao_comiss": [0, 0, 0, 0],
+            "dt_install_maq": ["2026-03-05", None, None, None],
+        }
+    )
     session = MagicMock()
     etl_file = MagicMock()
     etl_file.id = "file-1"
-    etl_file.file_date = pd.Timestamp("2026-03-02").date()
+    etl_file.file_date = ref_date
 
     with patch("worker.steps.analytics_snapshot.is_step_done", return_value=False), patch(
         "worker.steps.analytics_snapshot.begin_step"
-    ), patch("worker.steps.analytics_snapshot.get_cached_workbook", return_value=workbook), patch(
+    ), patch("worker.steps.analytics_snapshot.get_cached_dataframe", return_value=dataframe), patch(
         "worker.steps.analytics_snapshot.mark_step_done"
     ) as mock_mark_done:
         from worker.steps.analytics_snapshot import run_analytics_snapshot
@@ -156,17 +161,13 @@ def test_analytics_snapshot_calculates_and_upserts_required_metrics():
     rows = [call.args[1] for call in session.execute.call_args_list]
     totals = {row["indicator"]: row["total"] for row in rows}
 
-    assert totals["contas-abertas"] == 30
-    assert totals["contas-qualificadas"] == 10
-    assert totals["instalacao-c6pay"] == 5
+    assert totals["contas-abertas"] == 2
+    assert totals["contas-qualificadas"] == 1
+    assert totals["instalacao-c6pay"] == 1
     mock_mark_done.assert_called_once()
 
 
-def test_analytics_snapshot_raises_if_required_column_is_missing():
-    workbook = {
-        "Abertura": pd.DataFrame({"Coluna X": [1]}),
-        "Relacionamento": pd.DataFrame({"Maquinas Vendidas Relacionamento": [1]}),
-    }
+def test_analytics_snapshot_raises_if_dataframe_not_cached():
     session = MagicMock()
     etl_file = MagicMock()
     etl_file.id = "file-1"
@@ -174,8 +175,8 @@ def test_analytics_snapshot_raises_if_required_column_is_missing():
 
     with patch("worker.steps.analytics_snapshot.is_step_done", return_value=False), patch(
         "worker.steps.analytics_snapshot.begin_step"
-    ), patch("worker.steps.analytics_snapshot.get_cached_workbook", return_value=workbook):
+    ), patch("worker.steps.analytics_snapshot.get_cached_dataframe", return_value=None):
         from worker.steps.analytics_snapshot import run_analytics_snapshot
 
-        with pytest.raises(ValueError, match="Total de Contas Abertas"):
+        with pytest.raises(RuntimeError, match="No dataframe in cache"):
             run_analytics_snapshot(session, "job-1", etl_file)

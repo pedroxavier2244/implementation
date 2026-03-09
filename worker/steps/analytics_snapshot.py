@@ -1,79 +1,29 @@
-import re
-import unicodedata
 from datetime import date, datetime, timezone
 
+import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from shared.analytics_snapshot_schema import TABLE_NAME
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
-from worker.steps.extract import get_cached_workbook
+from worker.steps.extract import get_cached_dataframe
 
 
-def _normalize_token(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
-    normalized = normalized.lower()
-    normalized = re.sub(r"[^a-z0-9]+", "_", normalized)
-    return re.sub(r"_+", "_", normalized).strip("_")
+def _to_numeric(series):
+    s = pd.to_numeric(
+        series.astype(str).str.replace(r"[^0-9.,\-]", "", regex=True).str.replace(",", ".", regex=False),
+        errors="coerce",
+    ).fillna(0)
+    return s
 
 
-def _find_sheet(workbook: dict[str, object], candidates: list[str]) -> tuple[str, object] | tuple[None, None]:
-    if not workbook:
-        return None, None
-
-    normalized_to_original = {_normalize_token(name): name for name in workbook.keys()}
-    for candidate in candidates:
-        normalized = _normalize_token(candidate)
-        if normalized in normalized_to_original:
-            original = normalized_to_original[normalized]
-            return original, workbook[original]
-
-    return None, None
+def _in_reference_month(series, ref_date):
+    dates = pd.to_datetime(series, errors="coerce", dayfirst=False)
+    return (dates.dt.year == ref_date.year) & (dates.dt.month == ref_date.month)
 
 
-def _find_column(dataframe, candidates: list[str]) -> str | None:
-    normalized_map = {_normalize_token(col): col for col in dataframe.columns}
-    for candidate in candidates:
-        found = normalized_map.get(_normalize_token(candidate))
-        if found:
-            return found
-    return None
-
-
-def _sum_numeric(series) -> int:
-    import pandas as pd
-
-    cleaned = series.astype(str).str.strip()
-    cleaned = cleaned.replace({"": None, "nan": None, "none": None, "nat": None, "None": None})
-    cleaned = cleaned.str.replace(r"[^0-9,.\-]", "", regex=True)
-
-    has_comma = cleaned.str.contains(",", na=False)
-    has_dot = cleaned.str.contains(r"\.", na=False)
-
-    brl_mask = has_comma & has_dot
-    cleaned.loc[brl_mask] = cleaned.loc[brl_mask].str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-
-    comma_only_mask = has_comma & ~has_dot
-    cleaned.loc[comma_only_mask] = cleaned.loc[comma_only_mask].str.replace(",", ".", regex=False)
-
-    numeric = pd.to_numeric(cleaned, errors="coerce").fillna(0)
-    return int(numeric.sum())
-
-
-def _require_sheet(workbook: dict[str, object], candidates: list[str], label: str):
-    name, dataframe = _find_sheet(workbook, candidates)
-    if dataframe is None:
-        available = ", ".join(workbook.keys())
-        raise ValueError(f"Sheet '{label}' not found. Available sheets: {available}")
-    return name, dataframe
-
-
-def _require_column(dataframe, candidates: list[str], label: str, sheet_name: str) -> str:
-    column = _find_column(dataframe, candidates)
-    if column is None:
-        available = ", ".join(map(str, dataframe.columns))
-        raise ValueError(f"Column '{label}' not found in sheet '{sheet_name}'. Available columns: {available}")
-    return column
+def _str_eq(series, value):
+    return series.astype(str).str.strip().str.upper() == value.upper()
 
 
 def run_analytics_snapshot(session: Session, job_id: str, etl_file) -> None:
@@ -82,42 +32,40 @@ def run_analytics_snapshot(session: Session, job_id: str, etl_file) -> None:
         return
     begin_step(session, job_id, step_name)
 
-    workbook = get_cached_workbook(job_id)
-    if workbook is None:
-        raise RuntimeError("No workbook in cache, extract must run first")
+    df = get_cached_dataframe(job_id)
+    if df is None:
+        raise RuntimeError("No dataframe in cache, extract must run first")
 
     reference_date: date = etl_file.file_date or date.today()
     loaded_at = datetime.now(timezone.utc)
 
-    abertura_sheet_name, df_abertura = _require_sheet(workbook, ["Abertura"], "Abertura")
-    relacionamento_sheet_name, df_relacionamento = _require_sheet(workbook, ["Relacionamento"], "Relacionamento")
+    is_pj = _str_eq(df["tipo_pessoa"], "PJ")
+    is_liberada = _str_eq(df["status_cc"], "LIBERADA")
 
-    total_abertas_col = _require_column(
-        df_abertura,
-        ["Total de Contas Abertas", "Total_de_Contas_Abertas"],
-        "Total de Contas Abertas",
-        abertura_sheet_name,
-    )
-    contas_qualificadas_col = _require_column(
-        df_abertura,
-        ["Contas Qualificadas", "Contas_Qualificadas"],
-        "Contas Qualificadas",
-        abertura_sheet_name,
-    )
-    maquinas_vendidas_col = _require_column(
-        df_relacionamento,
-        ["Maquinas Vendidas Relacionamento", "Maquinas_Vendidas_Relacionamento"],
-        "Maquinas Vendidas Relacionamento",
-        relacionamento_sheet_name,
-    )
+    # contas-abertas: PJ + LIBERADA + dt_conta_criada in reference month
+    in_ref_month_criada = _in_reference_month(df["dt_conta_criada"], reference_date)
+    contas_abertas = int((is_pj & is_liberada & in_ref_month_criada).sum())
+
+    # contas-qualificadas: PJ + LIBERADA + (ja_pago_comiss > 0 OR previsao_comiss > 0)
+    ja_pago = _to_numeric(df["ja_pago_comiss"])
+    previsao = _to_numeric(df["previsao_comiss"])
+    has_commission = (ja_pago > 0) | (previsao > 0)
+    contas_qualificadas = int((is_pj & is_liberada & has_commission).sum())
+
+    # instalacao-c6pay: dt_install_maq not null + in reference month
+    in_ref_month_install = _in_reference_month(df["dt_install_maq"], reference_date)
+    install_not_null = pd.to_datetime(df["dt_install_maq"], errors="coerce").notna()
+    instalacao_c6pay = int((install_not_null & in_ref_month_install).sum())
+
+    source = "visao_cliente"
 
     metric_rows = [
         {
             "indicator": "contas-abertas",
             "reference_date": reference_date,
-            "total": _sum_numeric(df_abertura[total_abertas_col]),
-            "source_sheet": abertura_sheet_name,
-            "source_column": total_abertas_col,
+            "total": contas_abertas,
+            "source_sheet": source,
+            "source_column": "tipo_pessoa,status_cc,dt_conta_criada",
             "job_id": job_id,
             "file_id": etl_file.id,
             "loaded_at": loaded_at,
@@ -125,9 +73,9 @@ def run_analytics_snapshot(session: Session, job_id: str, etl_file) -> None:
         {
             "indicator": "contas-qualificadas",
             "reference_date": reference_date,
-            "total": _sum_numeric(df_abertura[contas_qualificadas_col]),
-            "source_sheet": abertura_sheet_name,
-            "source_column": contas_qualificadas_col,
+            "total": contas_qualificadas,
+            "source_sheet": source,
+            "source_column": "tipo_pessoa,status_cc,ja_pago_comiss,previsao_comiss",
             "job_id": job_id,
             "file_id": etl_file.id,
             "loaded_at": loaded_at,
@@ -135,9 +83,9 @@ def run_analytics_snapshot(session: Session, job_id: str, etl_file) -> None:
         {
             "indicator": "instalacao-c6pay",
             "reference_date": reference_date,
-            "total": _sum_numeric(df_relacionamento[maquinas_vendidas_col]),
-            "source_sheet": relacionamento_sheet_name,
-            "source_column": maquinas_vendidas_col,
+            "total": instalacao_c6pay,
+            "source_sheet": source,
+            "source_column": "dt_install_maq",
             "job_id": job_id,
             "file_id": etl_file.id,
             "loaded_at": loaded_at,
