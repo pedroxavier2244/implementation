@@ -25,10 +25,6 @@ curl http://localhost:8000/health
 | API (Swagger) | http://localhost:8000/docs |
 | API OpenAPI JSON | http://localhost:8000/openapi.json |
 | MinIO Console | http://localhost:9001 |
-| Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3000 |
-
-Grafana default: `admin` / `admin`.
 
 ## Integracao da API (guia rapido)
 
@@ -36,13 +32,10 @@ Base URL local: `http://localhost:8000`
 
 Fluxo recomendado para integracao:
 
-1. Chamar `POST /v1/files/sync` para baixar o arquivo mais recente.
-2. Listar arquivos em `GET /v1/files` e pegar o `file_id`.
-3. Processar arquivo com `POST /v1/jobs/run`.
-4. Acompanhar execucao em `GET /v1/jobs` ou `GET /v1/jobs/{job_id}`.
-5. Consumir dados consolidados em:
-   - `GET /v1/data/visao-cliente`
-   - `GET /v1/analytics/...`
+1. Listar arquivos em `GET /v1/files` e pegar o `file_id`.
+2. Processar arquivo com `POST /v1/jobs/run`.
+3. Acompanhar execucao em `GET /v1/jobs` ou `GET /v1/jobs/{job_id}`.
+4. Consumir dados consolidados em `GET /v1/data/visao-cliente`.
 
 Regra de consolidacao:
 
@@ -52,18 +45,16 @@ Regra de consolidacao:
 
 ## Catalogo de endpoints
 
-### Health/Observabilidade
+### Health
 
 - `GET /health`
 - `GET /ready`
-- `GET /metrics`
 
 ### Arquivos (`/v1/files`)
 
 - `GET /v1/files`
 - `GET /v1/files/{file_id}`
 - `POST /v1/files/upload` (`multipart/form-data`, campo `file`)
-- `POST /v1/files/sync`
 
 ### Jobs (`/v1/jobs`)
 
@@ -82,45 +73,6 @@ Regra de consolidacao:
   - Retorna linha do tempo cronologica de snapshots do CNPJ/CPF.
   - Cada snapshot inclui `campos_alterados` com diff em relacao a anterior (null na primeira).
   - Ordenado por `data_base` ASC (mais antigo primeiro).
-
-### Analytics (`/v1/analytics`)
-
-Cada indicador tem 2 rotas: `summary` e `details`.
-
-- `GET /v1/analytics/contas-abertas/summary`
-- `GET /v1/analytics/contas-abertas/details`
-- `GET /v1/analytics/qualificacao-c6pay/summary`
-- `GET /v1/analytics/qualificacao-c6pay/details`
-- `GET /v1/analytics/instalacao-c6pay/summary`
-- `GET /v1/analytics/instalacao-c6pay/details`
-- `GET /v1/analytics/contas-qualificadas/summary`
-- `GET /v1/analytics/contas-qualificadas/details`
-
-Parametros comuns:
-
-- `period`: `daily | weekly | monthly`
-- `as_of`: data de referencia (`YYYY-MM-DD`)
-- `limit` e `offset` (somente em `details`)
-
-Regras de calculo em producao:
-
-- `contas-abertas`: `SUM(Total de Contas Abertas)` da aba `Abertura` (Base Gerencial).
-- `contas-qualificadas`: `SUM(Contas Qualificadas)` da aba `Abertura` (Base Gerencial).
-- `instalacao-c6pay`: `SUM(Maquinas Vendidas Relacionamento)` da aba `Relacionamento` (Base Gerencial).
-- `qualificacao-c6pay`: `COUNT` na tabela `final_visao_cliente` com:
-  `TIPO_PESSOA = PJ`, `STATUS_CC = LIBERADA`, `DT_INSTALL_MAQ >= as_of - 90 dias`,
-  `DT_CANCELAMENTO_MAQ vazio`, `TPV_M0 >= 5000`, `TPV_M1 < 5000`, `TPV_M2 < 5000`.
-
-Exemplo:
-
-```bash
-curl "http://localhost:8000/v1/analytics/contas-abertas/summary?period=monthly&as_of=2026-02-21"
-```
-
-### Alertas (`/v1/alerts`)
-
-- `GET /v1/alerts`
-- `GET /v1/alerts/{alert_id}`
 
 ### CNPJ (`/v1/cnpj`)
 
@@ -255,52 +207,7 @@ Response 200 (exemplo):
 }
 ```
 
-### 6) `GET /v1/analytics/.../summary`
-
-Exemplo request:
-
-```text
-/v1/analytics/contas-abertas/summary?period=monthly&as_of=2026-02-21
-```
-
-Response 200:
-
-```json
-{
-  "indicator": "contas-abertas",
-  "period": "monthly",
-  "as_of": "2026-02-21",
-  "period_start": "2026-02-01",
-  "period_end": "2026-02-28",
-  "total": 5249
-}
-```
-
-### 7) `GET /v1/analytics/.../details`
-
-Exemplo request:
-
-```text
-/v1/analytics/contas-abertas/details?period=monthly&as_of=2026-02-21&limit=20&offset=0
-```
-
-Response 200:
-
-```json
-{
-  "indicator": "contas-abertas",
-  "period": "monthly",
-  "as_of": "2026-02-21",
-  "period_start": "2026-02-01",
-  "period_end": "2026-02-28",
-  "total": 5249,
-  "limit": 20,
-  "offset": 0,
-  "items": []
-}
-```
-
-### 8) Erros padrao da API
+### 6) Erros padrao da API
 
 A maioria dos erros retorna:
 
@@ -321,14 +228,13 @@ Exemplos:
 Iniciar:
 
 ```bash
-docker start etl_tunnel etl_grafana_tunnel
+docker start etl_tunnel
 ```
 
 Pegar URL publica atual:
 
 ```bash
 docker logs --tail=60 etl_tunnel
-docker logs --tail=60 etl_grafana_tunnel
 ```
 
 Observacao: link `trycloudflare.com` muda quando o container reinicia.
@@ -354,8 +260,6 @@ URLs HML:
 |---|---|
 | API (Swagger) | http://localhost:8100/docs |
 | MinIO Console | http://localhost:9101 |
-| Prometheus | http://localhost:9190 |
-| Grafana | http://localhost:3100 |
 
 ## Testes
 
