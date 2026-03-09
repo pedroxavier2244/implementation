@@ -7,7 +7,7 @@ Fluxo coberto:
   3. GET  /v1/jobs          → job.status == DONE
   4. GET  /v1/data/visao-cliente?documento=<cnpj>  → dados persistidos
   5. GET  /v1/data/visao-cliente/historico?documento=<cnpj>  → 1 snapshot
-  6. GET  /v1/analytics/contas-abertas/summary  → indicador agregado
+  6. GET  /health  → API ainda saudavel
 
 Requer: Docker Engine rodando (para testcontainers/postgres).
 Executar: pytest tests/integration/test_e2e_pipeline.py -v -s

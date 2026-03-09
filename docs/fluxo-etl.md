@@ -2,36 +2,23 @@
 
 Documentacao do fluxo completo desde a entrada do arquivo ate o dado disponivel na API.
 
-**Ultima atualizacao:** 2026-03-06
+**Ultima atualizacao:** 2026-03-09
 
 ---
 
 ## Visao Geral
 
 ```
-Google Drive ──► Checker ──► MinIO ──► Worker ETL ──► PostgreSQL ──► API
-                  (agendado               (8 steps                  (consulta
-                  18h SP)                 sequenciais)               por CNPJ/CPF)
+Upload .xlsx ──► MinIO ──► Worker ETL ──► PostgreSQL ──► API
+(manual via          (7 steps               (consulta
+ /v1/files/upload)   sequenciais)            por CNPJ/CPF)
 ```
 
 ---
 
 ## 1. Entrada do Arquivo
 
-O sistema aceita o arquivo de duas formas:
-
-### A) Automatica — Google Drive (producao)
-
-O **Checker** roda todo dia as **18:00 horario de Sao Paulo** e:
-
-1. Acessa a fonte configurada em `ETL_SOURCE_API_URL`
-2. Faz o download do arquivo `.xlsx` mais recente
-3. Calcula o hash SHA-256 — se o hash ja existe no banco para aquela data, ignora (evita duplicata)
-4. Faz upload para o **MinIO** (bucket `etl-files`)
-5. Cria registro `EtlFile` no PostgreSQL com `file_date` extraido do nome do arquivo
-6. Enfileira a task `run_etl` no Redis/Celery
-
-### B) Manual — Upload via API
+O sistema recebe o arquivo via upload manual:
 
 ```http
 POST /v1/files/upload
@@ -39,43 +26,30 @@ Content-Type: multipart/form-data
 campo: file (arquivo .xlsx)
 ```
 
-Ou sincronizacao manual via:
-
-```http
-POST /v1/files/sync
-```
-
 > **Regra do `file_date`:** o sistema extrai a data do nome do arquivo usando o padrao `DD.MM.AA`.
 > Exemplo: `Relatorio de Producao - 21.02.26.xlsx` -> `file_date = 2026-02-21`.
-> Essa data e usada como referencia nos analytics. Se o nome nao contiver data, usa a data de upload.
+> Se o nome nao contiver data, usa a data de upload.
 
 ---
 
 ## 2. Estrutura do Arquivo Esperado
 
-O arquivo `.xlsx` deve conter:
-
-| Aba | Obrigatoria | Usado por |
-|-----|-------------|-----------|
-| **Visao Cliente** | Sim | ETL principal — dados de todos os clientes |
-| **Abertura** | Sim (analytics) | Indicadores: contas abertas e qualificadas |
-| **Relacionamento** | Sim (analytics) | Indicador: maquinas vendidas (instalacao C6Pay) |
+O arquivo `.xlsx` deve conter a aba **Visao Cliente** com os campos de todos os clientes.
 
 ---
 
-## 3. Pipeline ETL — 8 Steps Sequenciais
+## 3. Pipeline ETL — 7 Steps Sequenciais
 
-O worker processa o arquivo em **8 steps sequenciais**. Cada step e idempotente — se o job reiniciar, steps ja concluidos sao pulados (checkpoint por `etl_job_step`).
+O worker processa o arquivo em **7 steps sequenciais**. Cada step e idempotente — se o job reiniciar, steps ja concluidos sao pulados (checkpoint por `etl_job_step`).
 
 ```
-EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ──► UPSERT ──► ANALYTICS_SNAPSHOT ──► CNPJ_VERIFY
+EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ──► UPSERT ──► CNPJ_VERIFY
 ```
 
 ### Step 1 — EXTRACT
 
 - Baixa o arquivo `.xlsx` do MinIO
-- Carrega todas as abas em memoria (workbook cache interno do worker)
-- Identifica a aba "Visao Cliente" por nome normalizado (ignora acentos/maiusculas)
+- Carrega a aba "Visao Cliente" em memoria
 
 ### Step 2 — CLEAN
 
@@ -120,19 +94,7 @@ EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ─�
 - Garante **1 linha por `cd_cpf_cnpj_cliente`** na tabela final
 - Arquivo mais antigo nunca sobrescreve dado mais novo
 
-### Step 7 — ANALYTICS SNAPSHOT
-
-- Le as abas "Abertura" e "Relacionamento" do workbook em cache
-- Calcula os totais dos indicadores com busca tolerante a variacao de nome de coluna
-- Grava (ou atualiza) em `analytics_indicator_snapshot` com `reference_date = file_date`
-
-| Indicador | Fonte | Formula |
-|-----------|-------|---------|
-| `contas-abertas` | Aba "Abertura" | `SUM(Total de Contas Abertas)` |
-| `contas-qualificadas` | Aba "Abertura" | `SUM(Contas Qualificadas)` |
-| `instalacao-c6pay` | Aba "Relacionamento" | `SUM(Maquinas Vendidas Relacionamento)` |
-
-### Step 8 — CNPJ VERIFY
+### Step 7 — CNPJ VERIFY
 
 - Seleciona CNPJs do job atual que nao foram verificados nos ultimos 30 dias (TTL)
 - Processa ate **300 CNPJs por execucao** na BrasilAPI (~0.35s por CNPJ)
@@ -147,7 +109,7 @@ EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ─�
 
 | Tabela | Descricao |
 |--------|-----------|
-| `etl_file` | Registro de cada arquivo baixado/uploadado. `file_date` e a data do relatorio (extraida do nome) |
+| `etl_file` | Registro de cada arquivo uploadado. `file_date` e a data do relatorio (extraida do nome) |
 | `etl_job_run` | Historico de execucoes do ETL com status e contadores |
 | `etl_job_step` | Detalhe de cada step por job (inicio, fim, erro, status) |
 | `etl_bad_rows` | Linhas invalidas com motivo de rejeicao |
@@ -155,9 +117,6 @@ EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ─�
 | `final_visao_cliente` | Tabela consolidada final — 1 linha por cliente, com o dado mais recente |
 | `cnpj_rf_cache` | Cache de consultas BrasilAPI (TTL 30 dias) |
 | `cnpj_divergencia` | Divergencias entre dados C6 Bank e Receita Federal |
-| `analytics_indicator_snapshot` | Indicadores de analytics por data de referencia |
-| `alert_event` | Alertas gerados pelo sistema |
-| `alert_event_channel` | Canais de entrega de cada alerta (Telegram, Email) |
 
 ### Regra de consolidacao da `final_visao_cliente`
 
@@ -190,12 +149,10 @@ Documentacao completa de todos os endpoints: `docs/api-integracao.md`
 ```
 GET  /health                                          — API no ar?
 GET  /ready                                           — dependencias prontas?
-GET  /metrics                                         — metricas Prometheus
 
 GET  /v1/files                                        — arquivos registrados
 GET  /v1/files/{file_id}                              — detalhe de arquivo
 POST /v1/files/upload                                 — upload manual de planilha
-POST /v1/files/sync                                   — disparo manual do checker
 
 POST /v1/jobs/run                                     — iniciar ETL
 POST /v1/jobs/reprocess/{file_id}                     — reprocessar arquivo
@@ -205,83 +162,23 @@ GET  /v1/jobs/{job_id}                                — detalhe de execucao
 GET  /v1/data/visao-cliente?documento=<cpf_cnpj>      — dado atual do cliente
 GET  /v1/data/visao-cliente/historico?documento=<...> — linha do tempo do cliente
 
-GET  /v1/analytics/contas-abertas/summary
-GET  /v1/analytics/contas-abertas/details
-GET  /v1/analytics/contas-qualificadas/summary
-GET  /v1/analytics/contas-qualificadas/details
-GET  /v1/analytics/instalacao-c6pay/summary
-GET  /v1/analytics/instalacao-c6pay/details
-GET  /v1/analytics/qualificacao-c6pay/summary
-GET  /v1/analytics/qualificacao-c6pay/details
-
 GET  /v1/cnpj/{cnpj}                                  — dados Receita Federal
 GET  /v1/cnpj/divergencias/list                       — divergencias C6 vs RF
-
-GET  /v1/alerts                                       — alertas gerados
-GET  /v1/alerts/{alert_id}                            — detalhe de alerta
 ```
 
 ---
 
-## 6. Notificacoes
-
-O **worker-notifier** envia alertas via Telegram e/ou Email nos eventos:
-
-| Evento | Severidade |
-|--------|-----------|
-| ETL concluido com sucesso | INFO |
-| ETL falhou apos todas as retries | CRITICAL |
-| Arquivo com hash duplicado (mesmo arquivo) | WARNING |
-| Arquivo nao encontrado na fonte | CRITICAL |
-| Divergencias CNPJ encontradas | WARNING |
-
-Configuracao em `.env`:
-```
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHAT_ID=...
-SMTP_HOST=...
-SMTP_PORT=587
-SMTP_USER=...
-SMTP_PASSWORD=...
-```
-
----
-
-## 7. Monitoramento
-
-| Servico | URL (producao) |
-|---------|---------------|
-| Prometheus | http://5.189.163.33:9090 |
-| Grafana | http://5.189.163.33:3000 (admin/admin) |
-
----
-
-## 8. Retry e Tolerancia a Falhas
+## 6. Retry e Tolerancia a Falhas
 
 - Jobs com falha entram em `RETRYING` automaticamente
-- Delays crescentes: 300s → 600s → 1200s
-- Apos **3 retries**: status `DEAD` + alerta CRITICAL
+- Delays crescentes: 300s -> 600s -> 1200s
+- Apos **3 retries**: status `DEAD` + log CRITICAL no worker
 - Steps sao idempotentes: reinicio nao reprocessa o que ja foi feito
-- Concorrencia do worker ETL: **2** workers
+- Concorrencia do worker ETL: **1** worker
 
 ---
 
-## 9. Agendamento
-
-| Servico | Horario | Descricao |
-|---------|---------|-----------|
-| Checker | 18:00 SP | Baixa arquivo da fonte e dispara ETL automaticamente |
-
-Configuracao em `.env`:
-```
-ETL_SCHEDULE_HOUR=18
-ETL_SCHEDULE_MINUTE=0
-ETL_TIMEZONE=America/Sao_Paulo
-```
-
----
-
-## 10. Estrutura do Projeto
+## 7. Estrutura do Projeto
 
 ```
 etl-system/
@@ -289,14 +186,11 @@ etl-system/
     main.py                    # App FastAPI, registro de routers
     routes/
       data.py                  # GET /v1/data/visao-cliente e /historico
-      analytics.py             # GET /v1/analytics/...
       files.py                 # GET|POST /v1/files
       jobs.py                  # GET|POST /v1/jobs
       cnpj.py                  # GET /v1/cnpj
-      alerts.py                # GET /v1/alerts
     schemas/
       data.py                  # Pydantic: VisaoClienteSearchOut, SnapshotItem, VisaoClienteHistoricoOut
-      analytics.py             # Pydantic: IndicatorSummaryOut, IndicatorDetailsOut
       files.py                 # Pydantic: FileOut, FileListOut
       jobs.py                  # Pydantic: JobOut, JobRunOut
   worker/
@@ -308,28 +202,21 @@ etl-system/
       validate.py              # Step 4: validacao de linhas
       stage.py                 # Step 5: insere em staging_visao_cliente
       upsert.py                # Step 6: merge em final_visao_cliente
-      analytics_snapshot.py   # Step 7: indicadores em analytics_indicator_snapshot
-      cnpj_verify.py          # Step 8: verifica CNPJs na BrasilAPI
+      cnpj_verify.py           # Step 7: verifica CNPJs na BrasilAPI
   shared/
     models.py                  # Modelos SQLAlchemy (todas as tabelas)
     config.py                  # Settings (pydantic-settings, lido do .env)
     db.py                      # get_db_session() context manager
     visao_cliente_schema.py    # REQUIRED_COLUMNS, FINAL_TABLE_NAME, STAGING_TABLE_NAME
-    analytics_snapshot_schema.py  # SNAPSHOT_INDICATORS, TABLE_NAME
     brasilapi.py               # fetch_cnpj() — cliente da BrasilAPI
-  checker/
-    checker.py                 # run_daily(): baixa arquivo e enfileira ETL
-  notifier/
-    tasks.py                   # Task Celery: envia alertas Telegram/Email
   migrations/
     versions/                  # Alembic migrations
   tests/
     unit/                      # Testes unitarios (pytest)
     integration/               # Testes de integracao (requer Docker)
   docs/
-    api-integracao.md          # Este guia de integracao
+    api-integracao.md          # Guia de integracao da API
     fluxo-etl.md               # Este documento
-  docker-compose.yml           # Infra completa (dev/prod)
-  docker-compose.hml.yml       # Ambiente HML isolado
+  docker-compose.yml           # Infra (postgres, redis, minio, api, worker-etl)
   .env.example                 # Template de variaveis de ambiente
 ```
