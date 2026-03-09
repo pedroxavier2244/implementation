@@ -25,25 +25,9 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "etl-files"
     MINIO_SECURE: bool = False
 
-    # Notifier
-    TELEGRAM_BOT_TOKEN: str = ""
-    TELEGRAM_CHAT_ID: str = ""
-    SMTP_HOST: str = ""
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-
     # ETL Config
-    ETL_SCHEDULE_HOUR: int = 18
-    ETL_SCHEDULE_MINUTE: int = 0
-    ETL_TIMEZONE: str = "America/Sao_Paulo"
-    ETL_SOURCE_API_URL: str = "https://example.com/api/file"
-    ETL_SOURCE_API_KEY: str = ""
     BAD_ROW_THRESHOLD_PCT: float = 5.0
     MAX_RETRIES: int = 3
-
-    # Alerts
-    FLAG_FILE_DIR: str = "/app/alerts"
 
     # CNPJ Verification
     CNPJ_CACHE_TTL_DAYS: int = 30
