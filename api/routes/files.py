@@ -1,16 +1,28 @@
 import hashlib
+import re
 import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from api.schemas.files import FileListOut, FileOut
-from shared.celery_dispatch import enqueue_task
 from shared.db import get_db_session
 from shared.minio_client import MinioClient
 from shared.models import EtlFile
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+def _parse_date_from_filename(filename: str) -> date | None:
+    """Extrai DD.MM.YY do nome do arquivo. Ex: '21.02.26' -> 2026-02-21"""
+    match = re.search(r"(\d{2})\.(\d{2})\.(\d{2})", filename)
+    if not match:
+        return None
+    day, month, year_short = match.groups()
+    try:
+        return date(2000 + int(year_short), int(month), int(day))
+    except ValueError:
+        return None
 
 
 @router.get("", response_model=FileListOut)
@@ -54,7 +66,7 @@ def upload_file(file: UploadFile = File(...)):
     with get_db_session() as session:
         etl_file = EtlFile(
             id=str(uuid.uuid4()),
-            file_date=today,
+            file_date=_parse_date_from_filename(file.filename) or today,
             filename=file.filename,
             hash_sha256=file_hash,
             minio_path=minio_path,
@@ -66,8 +78,3 @@ def upload_file(file: UploadFile = File(...)):
         session.flush()
         return FileOut.model_validate(etl_file)
 
-
-@router.post("/sync")
-def sync_file():
-    task = enqueue_task("checker.checker.run_daily", queue="celery")
-    return {"task_id": task.id, "status": "QUEUED"}
