@@ -199,33 +199,9 @@ def run_cnpj_verify(session: Session, job_id: str) -> None:
     )
 
     if all_divergencias:
-        _send_divergencia_alert(job_id, all_divergencias)
+        logger.warning(
+            "cnpj_verify: %d divergencia(s) CNPJ encontrada(s) no job %s",
+            len(all_divergencias), job_id,
+        )
 
     mark_step_done(session, job_id, "cnpj_verify")
-
-
-def _send_divergencia_alert(job_id: str, divergencias: list[CnpjDivergencia]) -> None:
-    try:
-        from shared.celery_dispatch import enqueue_task
-        exemplos = [
-            f"{d.cnpj}: {d.campo} (C6={d.valor_c6!r} / RF={d.valor_rf!r})"
-            for d in divergencias[:5]
-        ]
-        enqueue_task(
-            "notifier.tasks.dispatch_notification",
-            kwargs={
-                "event_type": "CNPJ_DIVERGENCIA",
-                "severity": "WARNING",
-                "message": (
-                    f"{len(divergencias)} divergencia(s) CNPJ encontrada(s) no job {job_id}"
-                ),
-                "metadata": {
-                    "job_id": job_id,
-                    "total_divergencias": len(divergencias),
-                    "exemplos": exemplos,
-                },
-            },
-            queue="notification_jobs",
-        )
-    except Exception as exc:
-        logger.warning("cnpj_verify: falha ao enviar alerta: %s", exc)

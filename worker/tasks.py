@@ -1,7 +1,7 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 
-from shared.celery_dispatch import enqueue_task
 from shared.db import get_db_session
 from shared.models import EtlFile, EtlJobRun
 from worker.celery_app import app
@@ -15,25 +15,11 @@ from worker.steps.upsert import run_upsert
 from worker.steps.validate import run_validate
 
 
+logger = logging.getLogger(__name__)
+
+
 def compute_retry_delay(retry_number: int) -> int:
     return 300 * (2 ** retry_number)
-
-
-def _send_dead_alert(job_id: str, step_name: str, retry_count: int) -> None:
-    enqueue_task(
-        "notifier.tasks.dispatch_notification",
-        kwargs={
-            "event_type": "ETL_DEAD",
-            "severity": "CRITICAL",
-            "message": f"Job {job_id} failed after {retry_count} retries at step {step_name}",
-            "metadata": {
-                "job_id": job_id,
-                "step": step_name,
-                "retry_count": retry_count,
-            },
-        },
-        queue="notification_jobs",
-    )
 
 
 @app.task(name="worker.tasks.run_etl", bind=True, queue="etl_jobs")
@@ -110,7 +96,7 @@ def run_etl(self, job_id: str | None, file_id: str | None):
                 job.error_message = str(exc)
                 job.finished_at = datetime.now(timezone.utc)
                 clear_cached_dataframe(job_id)
-                _send_dead_alert(job_id, current_step, retry_count)
+                logger.critical("Job %s DEAD after %s retries at step %s", job_id, retry_count, current_step)
                 return
 
             job.status = "RETRYING"
