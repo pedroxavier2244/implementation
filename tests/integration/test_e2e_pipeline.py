@@ -92,9 +92,11 @@ class TestE2EPipeline:
         )
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["cd_cpf_cnpj_cliente"] == TEST_CNPJ
-        assert body["nome_cliente"] == "Empresa Teste LTDA"
-        assert body["tipo_pessoa"] == "PJ"
+        assert body["total"] >= 1, f"Esperado ao menos 1 item, got: {body}"
+        item = body["items"][0]
+        assert item["cd_cpf_cnpj_cliente"] == TEST_CNPJ
+        assert item["nome_cliente"] == "Empresa Teste LTDA"
+        assert item["tipo_pessoa"] == "PJ"
 
     # ── 5. Histórico ──────────────────────────────────────────────────────────
 

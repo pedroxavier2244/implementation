@@ -45,12 +45,13 @@ def pg_url(pg_container):
 
 
 @pytest.fixture(scope="session")
-def run_migrations(pg_url):
+def run_migrations(pg_url, test_env):
     """Roda alembic upgrade head no banco de teste."""
     from alembic import command
     from alembic.config import Config as AlembicConfig
+    import os
 
-    alembic_cfg = AlembicConfig("alembic.ini")
+    alembic_cfg = AlembicConfig(os.path.join(os.path.dirname(__file__), "..", "..", "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", pg_url)
     command.upgrade(alembic_cfg, "head")
     return pg_url
@@ -177,10 +178,23 @@ def patch_celery_eager(fake_redis_server):
         task_eager_propagates=True,
     )
 
+    from worker.tasks import run_etl as _run_etl_task
+
+    def _smart_enqueue(task_name, args=None, kwargs=None, queue=None):
+        if task_name == "worker.tasks.run_etl":
+            result = _run_etl_task.apply(kwargs=kwargs or {})
+            mock = MagicMock()
+            mock.id = result.id or "eager-task-id"
+            return mock
+        mock = MagicMock()
+        mock.id = "mock-notification-task"
+        return mock
+
     with patch("redis.from_url", return_value=fake_conn):
-        with patch("shared.celery_dispatch.enqueue_task") as mock_enqueue:
-            mock_enqueue.return_value = MagicMock(id="mock-notification-task")
-            yield
+        with patch("shared.celery_dispatch.enqueue_task", side_effect=_smart_enqueue):
+            with patch("api.routes.jobs.enqueue_task", side_effect=_smart_enqueue):
+                with patch("api.routes.files.enqueue_task", side_effect=_smart_enqueue):
+                    yield
 
 
 # ── Patch da BrasilAPI ────────────────────────────────────────────────────────

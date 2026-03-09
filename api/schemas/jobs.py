@@ -25,6 +25,7 @@ class StepOut(BaseModel):
 
 class JobOut(BaseModel):
     id: str
+    file_id: Optional[str] = None
     status: str
     triggered_by: str
     rows_total: Optional[int]
