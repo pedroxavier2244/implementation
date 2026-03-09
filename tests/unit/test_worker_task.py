@@ -7,8 +7,6 @@ def test_run_etl_marks_job_done_on_success():
     ) as mock_validate, patch("worker.tasks.run_clean") as mock_clean, patch("worker.tasks.run_enrich") as mock_enrich, patch(
         "worker.tasks.run_stage"
     ) as mock_stage, patch("worker.tasks.run_upsert") as mock_upsert, patch(
-        "worker.tasks.run_analytics_snapshot"
-    ) as mock_analytics_snapshot, patch(
         "worker.tasks.run_cnpj_verify"
     ) as mock_cnpj_verify:
         mock_session = MagicMock()
@@ -23,7 +21,7 @@ def test_run_etl_marks_job_done_on_success():
 
         from worker.tasks import run_etl
 
-        run_etl.__wrapped__(MagicMock(request=MagicMock(retries=0)), job_id="job-1", file_id=None)
+        run_etl.__wrapped__.__func__(run_etl, job_id="job-1", file_id=None)
 
         assert mock_job.status == "DONE"
         mock_extract.assert_called_once()
@@ -32,7 +30,6 @@ def test_run_etl_marks_job_done_on_success():
         mock_enrich.assert_called_once()
         mock_stage.assert_called_once()
         mock_upsert.assert_called_once()
-        mock_analytics_snapshot.assert_called_once()
         mock_cnpj_verify.assert_called_once()
 
 
@@ -51,7 +48,7 @@ def test_run_etl_rolls_back_session_before_marking_failure():
         "worker.tasks.run_validate"
     ) as mock_validate, patch("worker.tasks.run_stage") as mock_stage, patch(
         "worker.tasks.run_upsert", side_effect=RuntimeError("upsert failed")
-    ), patch("worker.tasks.run_analytics_snapshot") as mock_analytics_snapshot, patch(
+    ), patch(
         "worker.tasks.run_cnpj_verify"
     ), patch("worker.tasks.mark_step_failed") as mock_mark_step_failed:
         mock_session = MagicMock()
@@ -66,12 +63,12 @@ def test_run_etl_rolls_back_session_before_marking_failure():
 
         from worker.tasks import run_etl
 
-        task_ctx = MagicMock()
-        task_ctx.request = MagicMock(retries=0)
-        task_ctx.retry.side_effect = RuntimeError("retry called")
+        task_self = MagicMock()
+        task_self.request = MagicMock(retries=0)
+        task_self.retry.side_effect = RuntimeError("retry called")
 
         try:
-            run_etl.__wrapped__(task_ctx, job_id="job-1", file_id=None)
+            run_etl.__wrapped__.__func__(task_self, job_id="job-1", file_id=None)
         except RuntimeError as exc:
             assert str(exc) == "retry called"
 
@@ -80,6 +77,5 @@ def test_run_etl_rolls_back_session_before_marking_failure():
         mock_enrich.assert_called_once()
         mock_validate.assert_called_once()
         mock_stage.assert_called_once()
-        mock_analytics_snapshot.assert_not_called()
         mock_session.rollback.assert_called_once()
         mock_mark_step_failed.assert_called_once_with(mock_session, "job-1", "upsert", "upsert failed")

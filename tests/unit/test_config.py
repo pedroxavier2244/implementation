@@ -73,14 +73,8 @@ def test_settings_defaults():
         s = Settings(_env_file=None)
         assert s.POSTGRES_PORT == 5432
         assert s.MINIO_SECURE == False
-        assert s.ETL_SCHEDULE_HOUR == 18
-        assert s.ETL_SCHEDULE_MINUTE == 0
-        assert s.ETL_TIMEZONE == "America/Sao_Paulo"
         assert s.BAD_ROW_THRESHOLD_PCT == 5.0
         assert s.MAX_RETRIES == 3
-        assert s.FLAG_FILE_DIR == "/app/alerts"
-        assert s.TELEGRAM_BOT_TOKEN == ""
-        assert s.SMTP_HOST == ""
 
 
 def test_cnpj_settings_defaults():

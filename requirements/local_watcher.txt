@@ -1,2 +1,0 @@
-redis==5.2.1
-winotify==1.1.3

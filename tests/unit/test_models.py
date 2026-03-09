@@ -12,7 +12,7 @@ def test_all_tables_created():
     tables = inspector.get_table_names()
     expected = [
         "etl_file", "etl_job_run", "etl_job_step",
-        "etl_bad_rows", "alert_event", "alert_event_channel"
+        "etl_bad_rows",
     ]
     for table in expected:
         assert table in tables, f"Missing table: {table}"
@@ -82,43 +82,6 @@ def test_etl_job_run_relationships():
         assert loaded_job.status == "QUEUED"
         assert len(loaded_job.steps) == 1
         assert loaded_job.steps[0].step_name == "extract"
-
-
-def test_alert_event_dedup_key_unique():
-    engine = create_engine("sqlite:///:memory:")
-    from shared.models import Base, AlertEvent
-    Base.metadata.create_all(engine)
-    with Session(engine) as s:
-        import uuid
-        a1 = AlertEvent(
-            id=str(uuid.uuid4()),
-            dedup_key="job:abc:ETL_DEAD",
-            event_type="ETL_DEAD",
-            severity="CRITICAL",
-            message="test",
-        )
-        s.add(a1)
-        s.commit()
-        a2 = AlertEvent(
-            id=str(uuid.uuid4()),
-            dedup_key="job:abc:ETL_DEAD",  # same dedup_key
-            event_type="ETL_DEAD",
-            severity="CRITICAL",
-            message="test2",
-        )
-        s.add(a2)
-        with pytest.raises(IntegrityError):
-            s.commit()
-
-
-def test_metadata_column_name_is_metadata_not_metadata_underscore():
-    engine = create_engine("sqlite:///:memory:")
-    from shared.models import Base
-    Base.metadata.create_all(engine)
-    inspector = inspect(engine)
-    cols = {c["name"] for c in inspector.get_columns("alert_event")}
-    assert "metadata" in cols, "DB column should be named 'metadata'"
-    assert "metadata_" not in cols, "DB column should NOT be named 'metadata_'"
 
 
 def test_cnpj_rf_cache_table_exists():
