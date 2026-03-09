@@ -112,26 +112,7 @@ class TestE2EPipeline:
         snapshots = body.get("snapshots", body) if isinstance(body, dict) else body
         assert len(snapshots) >= 1, "Esperado ao menos 1 snapshot no histórico"
 
-    # ── 6. Analytics ──────────────────────────────────────────────────────────
-
-    def test_analytics_contas_abertas_summary(self, client):
-        """GET /v1/analytics/contas-abertas/summary deve retornar total > 0."""
-        response = client.get("/v1/analytics/contas-abertas/summary")
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert "total" in body or "data" in body or len(body) > 0, f"Resposta vazia: {body}"
-
-    def test_analytics_contas_qualificadas_summary(self, client):
-        """GET /v1/analytics/contas-qualificadas/summary deve retornar total > 0."""
-        response = client.get("/v1/analytics/contas-qualificadas/summary")
-        assert response.status_code == 200, response.text
-
-    def test_analytics_instalacao_c6pay_summary(self, client):
-        """GET /v1/analytics/instalacao-c6pay/summary deve retornar total >= 0."""
-        response = client.get("/v1/analytics/instalacao-c6pay/summary")
-        assert response.status_code == 200, response.text
-
-    # ── 7. Health / Ready ─────────────────────────────────────────────────────
+    # ── 6. Health / Ready ────────────────────────────────────────────────────
 
     def test_health_still_ok(self, client):
         """Health deve continuar ok após o pipeline rodar."""

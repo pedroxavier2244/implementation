@@ -193,8 +193,7 @@ def patch_celery_eager(fake_redis_server):
     with patch("redis.from_url", return_value=fake_conn):
         with patch("shared.celery_dispatch.enqueue_task", side_effect=_smart_enqueue):
             with patch("api.routes.jobs.enqueue_task", side_effect=_smart_enqueue):
-                with patch("api.routes.files.enqueue_task", side_effect=_smart_enqueue):
-                    yield
+                yield
 
 
 # ── Patch da BrasilAPI ────────────────────────────────────────────────────────
