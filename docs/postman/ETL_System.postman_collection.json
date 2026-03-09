@@ -1,0 +1,475 @@
+{
+  "info": {
+    "name": "ETL System API",
+    "_postman_id": "etl-system-collection-v1",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Collection completa da API ETL System. Use os environments 'ETL - Localhost' ou 'ETL - Prod'."
+  },
+  "variable": [
+    { "key": "file_id",  "value": "" },
+    { "key": "job_id",   "value": "" },
+    { "key": "alert_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "GET /ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/ready", "host": ["{{base_url}}"], "path": ["ready"] }
+          }
+        },
+        {
+          "name": "GET /metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/metrics", "host": ["{{base_url}}"], "path": ["metrics"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Files",
+      "item": [
+        {
+          "name": "GET /v1/files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/files?limit=20&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "files"],
+              "query": [
+                { "key": "limit",  "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/files/:file_id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/files/{{file_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "files", "{{file_id}}"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/files/upload",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Arquivo .xlsx — nome no padrão 'DD.MM.AA' extrai a data automaticamente. Ex: 'Relatorio de Producao - 21.02.26.xlsx'"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/files/upload",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "files", "upload"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var body = pm.response.json();",
+                  "if (body.id) { pm.collectionVariables.set('file_id', body.id); }",
+                  "pm.test('Upload OK', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /v1/files/sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/files/sync",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "files", "sync"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Jobs",
+      "item": [
+        {
+          "name": "POST /v1/jobs/run",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"file_id\": \"{{file_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/jobs/run",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "jobs", "run"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var body = pm.response.json();",
+                  "if (body.job_id) { pm.collectionVariables.set('job_id', body.job_id); }",
+                  "pm.test('Status QUEUED', () => pm.expect(body.status).to.eql('QUEUED'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /v1/jobs/reprocess/:file_id",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/jobs/reprocess/{{file_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "jobs", "reprocess", "{{file_id}}"]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/jobs?limit=20&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "jobs"],
+              "query": [
+                { "key": "status", "value": "DONE",  "disabled": true },
+                { "key": "status", "value": "RUNNING", "disabled": true },
+                { "key": "status", "value": "DEAD",  "disabled": true },
+                { "key": "limit",  "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/jobs/:job_id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/jobs/{{job_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "jobs", "{{job_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Data",
+      "item": [
+        {
+          "name": "GET /v1/data/visao-cliente",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/data/visao-cliente?documento={{documento}}&limit=1&offset=0&fallback_rf=true",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "data", "visao-cliente"],
+              "query": [
+                { "key": "documento",   "value": "{{documento}}", "description": "CPF ou CNPJ (com ou sem pontuação)" },
+                { "key": "limit",       "value": "1" },
+                { "key": "offset",      "value": "0" },
+                { "key": "fallback_rf", "value": "true", "description": "Busca na Receita Federal se não encontrar localmente (apenas CNPJ)" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/data/visao-cliente/historico",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/data/visao-cliente/historico?documento={{documento}}&limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "data", "visao-cliente", "historico"],
+              "query": [
+                { "key": "documento", "value": "{{documento}}", "description": "CPF ou CNPJ" },
+                { "key": "limit",     "value": "50" },
+                { "key": "offset",    "value": "0" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "item": [
+        {
+          "name": "Contas Abertas",
+          "item": [
+            {
+              "name": "GET /v1/analytics/contas-abertas/summary",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/analytics/contas-abertas/summary?period=monthly&as_of={{as_of}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "analytics", "contas-abertas", "summary"],
+                  "query": [
+                    { "key": "period", "value": "monthly", "description": "daily | weekly | monthly" },
+                    { "key": "as_of",  "value": "{{as_of}}", "description": "YYYY-MM-DD (vazio = hoje)" }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "GET /v1/analytics/contas-abertas/details",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/analytics/contas-abertas/details?period=monthly&as_of={{as_of}}&limit=20&offset=0",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "analytics", "contas-abertas", "details"],
+                  "query": [
+                    { "key": "period",  "value": "monthly" },
+                    { "key": "as_of",   "value": "{{as_of}}" },
+                    { "key": "limit",   "value": "20" },
+                    { "key": "offset",  "value": "0" }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Contas Qualificadas",
+          "item": [
+            {
+              "name": "GET /v1/analytics/contas-qualificadas/summary",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/analytics/contas-qualificadas/summary?period=monthly&as_of={{as_of}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "analytics", "contas-qualificadas", "summary"],
+                  "query": [
+                    { "key": "period", "value": "monthly" },
+                    { "key": "as_of",  "value": "{{as_of}}" }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "GET /v1/analytics/contas-qualificadas/details",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/analytics/contas-qualificadas/details?period=monthly&as_of={{as_of}}&limit=20&offset=0",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "analytics", "contas-qualificadas", "details"],
+                  "query": [
+                    { "key": "period",  "value": "monthly" },
+                    { "key": "as_of",   "value": "{{as_of}}" },
+                    { "key": "limit",   "value": "20" },
+                    { "key": "offset",  "value": "0" }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Instalacao C6Pay",
+          "item": [
+            {
+              "name": "GET /v1/analytics/instalacao-c6pay/summary",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/analytics/instalacao-c6pay/summary?period=monthly&as_of={{as_of}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "analytics", "instalacao-c6pay", "summary"],
+                  "query": [
+                    { "key": "period", "value": "monthly" },
+                    { "key": "as_of",  "value": "{{as_of}}" }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "GET /v1/analytics/instalacao-c6pay/details",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/analytics/instalacao-c6pay/details?period=monthly&as_of={{as_of}}&limit=20&offset=0",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "analytics", "instalacao-c6pay", "details"],
+                  "query": [
+                    { "key": "period",  "value": "monthly" },
+                    { "key": "as_of",   "value": "{{as_of}}" },
+                    { "key": "limit",   "value": "20" },
+                    { "key": "offset",  "value": "0" }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Qualificacao C6Pay",
+          "item": [
+            {
+              "name": "GET /v1/analytics/qualificacao-c6pay/summary",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/analytics/qualificacao-c6pay/summary?period=monthly&as_of={{as_of}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "analytics", "qualificacao-c6pay", "summary"],
+                  "query": [
+                    { "key": "period", "value": "monthly" },
+                    { "key": "as_of",  "value": "{{as_of}}" }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "GET /v1/analytics/qualificacao-c6pay/details",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/analytics/qualificacao-c6pay/details?period=monthly&as_of={{as_of}}&limit=20&offset=0",
+                  "host": ["{{base_url}}"],
+                  "path": ["v1", "analytics", "qualificacao-c6pay", "details"],
+                  "query": [
+                    { "key": "period",  "value": "monthly" },
+                    { "key": "as_of",   "value": "{{as_of}}" },
+                    { "key": "limit",   "value": "20" },
+                    { "key": "offset",  "value": "0" }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CNPJ",
+      "item": [
+        {
+          "name": "GET /v1/cnpj/:cnpj",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/cnpj/{{cnpj_14d}}?fallback_live=true",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "cnpj", "{{cnpj_14d}}"],
+              "query": [
+                { "key": "fallback_live", "value": "true", "description": "Consulta BrasilAPI se não houver cache" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/cnpj/divergencias/list",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/cnpj/divergencias/list?limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "cnpj", "divergencias", "list"],
+              "query": [
+                { "key": "cnpj",   "value": "", "disabled": true, "description": "Filtrar por CNPJ específico" },
+                { "key": "campo",  "value": "", "disabled": true, "description": "Filtrar por campo (ex: razao_social)" },
+                { "key": "limit",  "value": "50" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Alerts",
+      "item": [
+        {
+          "name": "GET /v1/alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/alerts?limit=20&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "alerts"],
+              "query": [
+                { "key": "severity", "value": "CRITICAL", "disabled": true, "description": "INFO | WARNING | CRITICAL" },
+                { "key": "limit",    "value": "20" },
+                { "key": "offset",   "value": "0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/alerts/:alert_id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/alerts/{{alert_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "alerts", "{{alert_id}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

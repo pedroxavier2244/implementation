@@ -217,14 +217,17 @@ Response 200:
 ```json
 {
   "id": "f5d2bb22-1b6b-4b5d-9834-7f8f3ec9f3f2",
-  "file_date": "2026-03-02",
-  "filename": "arquivo.xlsx",
+  "file_date": "2026-02-21",
+  "filename": "Relatorio de Producao - 21.02.26.xlsx",
   "hash_sha256": "....",
   "is_valid": true,
   "is_processed": false,
-  "downloaded_at": "2026-03-02T20:10:00.000000Z"
+  "downloaded_at": "2026-03-06T20:10:00.000000Z"
 }
 ```
+
+Nota: `file_date` e extraido automaticamente do nome do arquivo (padrao `DD.MM.AA`).
+`21.02.26` -> `2026-02-21`. Se o nome nao contiver data, usa a data de upload.
 
 ### 5) `GET /v1/data/visao-cliente`
 
@@ -367,3 +370,4 @@ pytest tests/integration/ -v -m integration
 ## Documentacao complementar
 
 - Guia detalhado de integracao: `docs/api-integracao.md`
+- Fluxo completo do ETL e arquitetura: `docs/fluxo-etl.md`
