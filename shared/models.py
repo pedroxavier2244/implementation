@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, String, Boolean, Integer, BigInteger, Text, DateTime,
+    Column, String, Boolean, Integer, Text, DateTime,
     Date, ForeignKey, UniqueConstraint, Index, JSON
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -84,36 +84,6 @@ class EtlBadRow(Base):
     job = relationship("EtlJobRun", back_populates="bad_rows")
 
 
-class AlertEvent(Base):
-    __tablename__ = "alert_event"
-
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    dedup_key = Column(Text, unique=True, nullable=False)
-    event_type = Column(String(30), nullable=False)
-    severity = Column(String(10), nullable=False)
-    message = Column(Text)
-    metadata_ = Column("metadata", JSON)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    channels = relationship("AlertEventChannel", back_populates="alert")
-
-
-class AlertEventChannel(Base):
-    __tablename__ = "alert_event_channel"
-
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    alert_id = Column(String(36), ForeignKey("alert_event.id"), nullable=False)
-    channel = Column(String(20), nullable=False)
-    status = Column(String(20), nullable=False, default="PENDING")
-    sent_at = Column(DateTime(timezone=True))
-    error_message = Column(Text)
-    retry_count = Column(Integer, default=0)
-    max_retries = Column(Integer, default=3)
-    last_retry_at = Column(DateTime(timezone=True))
-    next_retry_at = Column(DateTime(timezone=True))
-
-    alert = relationship("AlertEvent", back_populates="channels")
-
 
 class CnpjRfCache(Base):
     __tablename__ = "cnpj_rf_cache"
@@ -147,23 +117,7 @@ class CnpjDivergencia(Base):
     found_at = Column(DateTime(timezone=True), default=utcnow)
 
 
-class AnalyticsIndicatorSnapshot(Base):
-    __tablename__ = "analytics_indicator_snapshot"
-
-    indicator = Column(Text, primary_key=True)
-    reference_date = Column(Date, primary_key=True)
-    total = Column(BigInteger, nullable=False, default=0)
-    source_sheet = Column(Text)
-    source_column = Column(Text)
-    job_id = Column(String(36), ForeignKey("etl_job_run.id"), nullable=False)
-    file_id = Column(String(36), ForeignKey("etl_file.id"))
-    loaded_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-
-
 # Strategic indexes
 Index("idx_job_status",     EtlJobRun.status)
 Index("idx_job_file_id",    EtlJobRun.file_id)
-Index("idx_alert_severity", AlertEvent.severity)
 Index("idx_file_date",      EtlFile.file_date)
-Index("idx_analytics_snapshot_reference_date", AnalyticsIndicatorSnapshot.reference_date)
-Index("idx_analytics_snapshot_file_id", AnalyticsIndicatorSnapshot.file_id)
