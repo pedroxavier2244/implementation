@@ -39,6 +39,9 @@ VISAO_CLIENTE_HEADERS = [
     "pct_conta_global", "maior_progresso_pct", "criterio_proximo",
     "ja_recebeu_comissao", "comissao_prox_mes", "status_qualificacao",
     "dias_desde_abertura", "m2_dias_faltantes", "nivel_cartao", "nivel_conta",
+    "cancelamento_maq", "elegivel_c6",
+    "safra_boleto", "idade_safra_boleto",
+    "safra_maquina", "idade_safra_maquina",
 ]
 
 # CNPJ de teste (14 dígitos, fictício)

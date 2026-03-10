@@ -128,3 +128,8 @@ def test_enrich_computes_additional_business_columns():
     assert row["faixa_alvo"] == "MAX"
 
 
+def test_required_columns_include_safra_and_cancelamento():
+    from shared.visao_cliente_schema import REQUIRED_COLUMNS
+    for col in ("cancelamento_maq", "elegivel_c6", "safra_boleto",
+                "idade_safra_boleto", "safra_maquina", "idade_safra_maquina"):
+        assert col in REQUIRED_COLUMNS, f"Missing column: {col}"
