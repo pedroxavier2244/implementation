@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "etl_db"
     POSTGRES_USER: str = "etl_user"
     POSTGRES_PASSWORD: str = "change_me"
+    POSTGRES_SSLMODE: str = "disable"  # "require" para Neon/produção
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 0
     DB_POOL_TIMEOUT: int = 30
@@ -39,6 +40,7 @@ class Settings(BaseSettings):
         return (
             f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+            f"?sslmode={self.POSTGRES_SSLMODE}"
         )
 
     @property
