@@ -3,6 +3,10 @@ WORKDIR /app
 COPY requirements/worker.txt requirements/worker.txt
 COPY requirements/base.txt requirements/base.txt
 RUN pip install --no-cache-dir -r requirements/worker.txt
+COPY alembic.ini alembic.ini
+COPY migrations/ migrations/
 COPY shared/ shared/
 COPY worker/ worker/
-CMD ["celery", "-A", "worker.celery_app", "worker", "-Q", "etl_jobs", "-c", "2", "--loglevel=info"]
+COPY worker/entrypoint.sh entrypoint.sh
+RUN chmod +x entrypoint.sh
+CMD ["./entrypoint.sh"]
