@@ -123,7 +123,7 @@ def test_enrich_computes_additional_business_columns():
     assert row["nivel_cartao"] == "Alto"
     assert row["nivel_conta"] == "Medio"
     assert row["ja_recebeu_comissao"] == "SIM"
-    assert row["comissao_prox_mes"] == "NÃO"
+    assert row["comissao_prox_mes"] == "NAO"  # padronizado sem acento após fix
     assert row["status_qualificacao"] == "D - Topo atingido"
     assert row["faixa_alvo"] == "MAX"
 
