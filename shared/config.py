@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = "change_me"
     POSTGRES_SSLMODE: str = "disable"  # "require" para Neon/produção
     DB_POOL_SIZE: int = 5
-    DB_MAX_OVERFLOW: int = 0
+    DB_MAX_OVERFLOW: int = 5   # F08: permite até 10 conexões totais (pool + overflow)
     DB_POOL_TIMEOUT: int = 30
 
     # Redis

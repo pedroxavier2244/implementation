@@ -97,8 +97,9 @@ def run_validate(session: Session, job_id: str, etl_file) -> None:
     total = len(dataframe)
     bad_count = len(bad_rows)
 
-    for bad in bad_rows:
-        session.merge(bad)
+    # Bulk insert em vez de N roundtrips individuais (F02 — QA fix)
+    if bad_rows:
+        session.bulk_save_objects(bad_rows)
 
     job = session.query(EtlJobRun).filter_by(id=job_id).first()
     if job is not None:

@@ -16,12 +16,15 @@ services:
 
   redis:
     image: redis:7-alpine
+    # F07: appendonly yes garante que jobs na fila não sejam perdidos em reinício
     command: >
       redis-server
-      --save ""
-      --appendonly no
+      --appendonly yes
+      --appendfsync everysec
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -76,3 +79,4 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  redis_data:

@@ -24,7 +24,8 @@ app = Celery(
     "worker",
     broker=settings.celery_broker_url,
     backend=settings.REDIS_URL,
-    include=["worker.tasks"],
+    # F01: inclui worker.tasks_cnpj para a task assíncrona de verificação de CNPJ
+    include=["worker.tasks", "worker.tasks_cnpj"],
 )
 
 app.conf.update(

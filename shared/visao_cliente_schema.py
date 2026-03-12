@@ -119,6 +119,12 @@ REQUIRED_COLUMNS = [
     "idade_safra_boleto",
     "safra_maquina",
     "idade_safra_maquina",
+    "metrica_ativacao",
+    "metrica_progresso",
+    "metrica_urgencia",
+    "metrica_financeiro",
+    "metrica_intencao",
+    "score_perfil",
 ]
 
 

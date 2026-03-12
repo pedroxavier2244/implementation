@@ -56,13 +56,18 @@ def run_extract(session: Session, job_id: str, etl_file) -> None:
     begin_step(session, job_id, "extract")
 
     import pandas as pd
+    import openpyxl
 
     minio = MinioClient()
     file_bytes = minio.download_file(etl_file.minio_path)
-    workbook = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
+
+    # F04: lê só os nomes das abas em modo read_only (sem carregar dados na RAM)
+    wb_meta = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    sheet_names = wb_meta.sheetnames
+    wb_meta.close()
 
     sheet_name = _resolve_sheet_name(
-        workbook,
+        {name: None for name in sheet_names},
         [
             SOURCE_SHEET_NAME,
             "Visao Cliente",
@@ -71,11 +76,11 @@ def run_extract(session: Session, job_id: str, etl_file) -> None:
         ],
     )
     if sheet_name is None:
-        available = ", ".join(workbook.keys())
+        available = ", ".join(sheet_names)
         raise ValueError(f"Sheet 'Visao Cliente' not found. Available sheets: {available}")
 
-    dataframe = workbook[sheet_name]
-    set_cached_workbook(job_id, workbook)
+    # Carrega apenas a aba resolvida — evita dobrar RAM ao ler workbook inteiro
+    dataframe = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name)
     set_cached_dataframe(job_id, dataframe)
 
     mark_step_done(session, job_id, "extract")

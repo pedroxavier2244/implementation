@@ -42,8 +42,16 @@ def run_clean(session: Session, job_id: str) -> None:
     if dataframe is None:
         raise RuntimeError("No dataframe in cache")
 
+    # F06: inclui string vazia "" para garantir que células em branco virem NULL
+    _NULL_STRINGS = {"", "nan", "none", "nat", "None", "NaT", "NULL", "null", "<NA>"}
+    _NULL_LOWER = {v.lower() for v in _NULL_STRINGS}
     for col in dataframe.select_dtypes(include="object").columns:
-        dataframe[col] = dataframe[col].astype(str).str.strip()
+        dataframe[col] = (
+            dataframe[col]
+            .astype(str)
+            .str.strip()
+            .where(lambda s: ~s.str.lower().isin(_NULL_LOWER), other=None)
+        )
 
     dataframe.columns = [normalize_column_name(c) for c in dataframe.columns]
 

@@ -23,6 +23,8 @@ from worker.steps.enrich import (
     _compute_gap_columns,
     _compute_status_columns,
     _compute_day_metrics,
+    _compute_safra_columns,
+    _compute_metrica_columns,
 )
 
 SHEET_NAME = "Visão Cliente"
@@ -53,6 +55,18 @@ OUTPUT_RENAME = {
     "m2_dias_faltantes":      "M2_DIAS_FALTANTES",
     "nivel_cartao":           "NIVEL_CARTAO",
     "nivel_conta":            "NIVEL_CONTA",
+    "cancelamento_maq":       "CANCELAMENTO_MAQ",
+    "elegivel_c6":            "ELEGIVEL_C6",
+    "safra_boleto":           "SAFRA_BOLETO",
+    "idade_safra_boleto":     "IDADE_SAFRA_BOLETO",
+    "safra_maquina":          "SAFRA_MAQUINA",
+    "idade_safra_maquina":    "IDADE_SAFRA_MAQUINA",
+    "metrica_ativacao":       "METRICA_ATIVACAO",
+    "metrica_progresso":      "METRICA_PROGRESSO",
+    "metrica_urgencia":       "METRICA_URGENCIA",
+    "metrica_financeiro":     "METRICA_FINANCEIRO",
+    "metrica_intencao":       "METRICA_INTENCAO",
+    "score_perfil":           "SCORE_PERFIL",
 }
 
 ORIGINAL_COLS_UPPERCASE = [
@@ -121,6 +135,9 @@ def processar(input_path: str) -> str:
         "ja_pago_comiss", "previsao_comiss",
         "limite_cartao", "limite_conta",
         "data_base", "dt_conta_criada",
+        "dt_install_maq", "dt_cancelamento_maq", "dt_ativacao_pay",
+        "fl_elegivel_venda_c6pay", "dt_prim_liq_bolcob",
+        "mes_ref_comiss", "chaves_pix_forte",
     ]
     missing = [c for c in required_input if c not in df.columns]
     if missing:
@@ -131,6 +148,8 @@ def processar(input_path: str) -> str:
     _compute_gap_columns(df)
     _compute_status_columns(df)
     _compute_day_metrics(df)
+    _compute_safra_columns(df)
+    _compute_metrica_columns(df)
 
     df = _restore_original_columns(df)
 
