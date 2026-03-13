@@ -13,7 +13,7 @@ from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 
 logger = logging.getLogger(__name__)
 
-# Campos da BrasilAPI -> colunas rf_* em final_visao_cliente
+# Campos da API CNPJ -> colunas rf_* em final_visao_cliente
 RF_COLUMN_MAP = {
     "razao_social":      "rf_razao_social",
     "natureza_juridica": "rf_natureza_juridica",
@@ -28,7 +28,7 @@ RF_COLUMN_MAP = {
     "email":             "rf_email",
 }
 
-SLEEP_BETWEEN_REQUESTS = 0.35  # ~3 req/s
+SLEEP_BETWEEN_REQUESTS = 1.1  # limite: 60 req/min (~1 req/s)
 
 
 def _is_stale(last_checked_at: datetime | None, ttl_days: int) -> bool:
@@ -123,7 +123,8 @@ def run_cnpj_verify(session: Session, job_id: str) -> None:
 
     settings = get_settings()
     ttl_days = settings.CNPJ_CACHE_TTL_DAYS
-    timeout = settings.BRASILAPI_TIMEOUT
+    timeout = settings.CNPJ_API_TIMEOUT
+    api_key = settings.CNPJ_API_KEY
     batch_size = settings.CNPJ_VERIFY_BATCH_SIZE
 
     cnpjs = _get_cnpjs_for_job(session, job_id)
@@ -145,7 +146,7 @@ def run_cnpj_verify(session: Session, job_id: str) -> None:
         cache = _get_cache(session, cnpj)
 
         try:
-            rf_data = fetch_cnpj(cnpj, timeout=timeout)
+            rf_data = fetch_cnpj(cnpj, timeout=timeout, api_key=api_key)
         except Exception as exc:
             logger.warning("cnpj_verify: erro ao buscar %s: %s", cnpj, exc)
             continue

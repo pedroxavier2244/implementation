@@ -63,7 +63,7 @@ def get_cnpj_cache(
 
         if cache is None and fallback_live:
             settings = get_settings()
-            live_data = fetch_cnpj(cnpj_digits, timeout=settings.BRASILAPI_TIMEOUT)
+            live_data = fetch_cnpj(cnpj_digits, timeout=settings.CNPJ_API_TIMEOUT, api_key=settings.CNPJ_API_KEY)
             if live_data:
                 cache = CnpjRfCache(cnpj=cnpj_digits)
                 cache.razao_social = live_data.get("razao_social")
@@ -82,10 +82,10 @@ def get_cnpj_cache(
                 cache.last_checked_at = datetime.now(timezone.utc)
                 session.add(cache)
                 session.flush()
-                source = "receita_federal_brasilapi"
+                source = "receita_federal_api"
 
         if cache is None:
-            raise HTTPException(status_code=404, detail="CNPJ nao encontrado no cache e na BrasilAPI")
+            raise HTTPException(status_code=404, detail="CNPJ nao encontrado no cache e na API CNPJ")
 
         return {
             "data_source":         source,

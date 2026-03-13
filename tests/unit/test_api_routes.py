@@ -88,17 +88,18 @@ def test_get_data_visao_cliente_fallbacks_to_brasilapi_when_not_found_locally(cl
         mock_session.query().filter_by().first.return_value = None
 
         mock_settings.return_value.CNPJ_CACHE_TTL_DAYS = 30
-        mock_settings.return_value.BRASILAPI_TIMEOUT = 5
+        mock_settings.return_value.CNPJ_API_TIMEOUT = 5
+        mock_settings.return_value.CNPJ_API_KEY = "test-key"
         mock_fetch.return_value = {
             "razao_social": "EMPRESA TESTE LTDA",
             "nome_fantasia": "EMPRESA TESTE",
-            "situacao_cadastral": "ATIVA",
+            "situacao_cadastral": "02",
             "descricao_situacao": "ATIVA",
             "cnae_fiscal": "4751201",
             "cnae_descricao": "COMERCIO VAREJISTA",
             "natureza_juridica": "2062",
             "capital_social": "50000",
-            "porte": "DEMAIS",
+            "porte": "01",
             "uf": "SP",
             "municipio": "SAO PAULO",
             "email": "contato@teste.com",
@@ -111,11 +112,11 @@ def test_get_data_visao_cliente_fallbacks_to_brasilapi_when_not_found_locally(cl
 
         assert payload["documento_consultado"] == "12345678000190"
         assert payload["total"] == 1
-        assert payload["items"][0]["data_source"] == "receita_federal_brasilapi"
+        assert payload["items"][0]["data_source"] == "receita_federal_api"
         assert payload["items"][0]["nome_cliente"] == "EMPRESA TESTE LTDA"
         assert "status_cc" in payload["items"][0]
         assert payload["items"][0]["status_cc"] is None
-        mock_fetch.assert_called_once_with("12345678000190", timeout=5)
+        mock_fetch.assert_called_once_with("12345678000190", timeout=5, api_key="test-key")
 
 
 def test_get_data_visao_cliente_does_not_call_brasilapi_for_cpf(client):
@@ -147,17 +148,18 @@ def test_get_cnpj_endpoint_fallbacks_to_brasilapi_when_cache_missing(client):
         mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
         mock_session.query().filter_by().first.return_value = None
-        mock_settings.return_value.BRASILAPI_TIMEOUT = 5
+        mock_settings.return_value.CNPJ_API_TIMEOUT = 5
+        mock_settings.return_value.CNPJ_API_KEY = "test-key"
         mock_fetch.return_value = {
             "razao_social": "EMPRESA TESTE LTDA",
             "nome_fantasia": "EMPRESA TESTE",
-            "situacao_cadastral": "ATIVA",
+            "situacao_cadastral": "02",
             "descricao_situacao": "ATIVA",
             "cnae_fiscal": "4751201",
             "cnae_descricao": "COMERCIO VAREJISTA",
             "natureza_juridica": "2062",
             "capital_social": "50000",
-            "porte": "DEMAIS",
+            "porte": "01",
             "uf": "SP",
             "municipio": "SAO PAULO",
             "email": "contato@teste.com",
@@ -168,9 +170,9 @@ def test_get_cnpj_endpoint_fallbacks_to_brasilapi_when_cache_missing(client):
         assert response.status_code == 200
         payload = response.json()
         assert payload["cnpj"] == "12345678000190"
-        assert payload["data_source"] == "receita_federal_brasilapi"
+        assert payload["data_source"] == "receita_federal_api"
         assert payload["razao_social"] == "EMPRESA TESTE LTDA"
-        mock_fetch.assert_called_once_with("12345678000190", timeout=5)
+        mock_fetch.assert_called_once_with("12345678000190", timeout=5, api_key="test-key")
 
 
 def test_get_cnpj_endpoint_rejects_invalid_length(client):
