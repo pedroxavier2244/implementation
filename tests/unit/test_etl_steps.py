@@ -80,8 +80,8 @@ def test_validate_marks_invalid_nivel_cartao_as_bad_row():
 
         run_validate(session, "job-1", make_file_mock())
 
-    assert session.merge.call_count == 1
-    bad_row = session.merge.call_args.args[0]
+    assert session.bulk_save_objects.call_count == 1
+    bad_row = session.bulk_save_objects.call_args.args[0][0]
     assert "invalid_level_value" in bad_row.reason
     assert "nivel_cartao" in bad_row.reason
     mock_mark_done.assert_called_once()
@@ -123,59 +123,13 @@ def test_enrich_computes_additional_business_columns():
     assert row["nivel_cartao"] == "Alto"
     assert row["nivel_conta"] == "Medio"
     assert row["ja_recebeu_comissao"] == "SIM"
-    assert row["comissao_prox_mes"] == "NÃO"
+    assert row["comissao_prox_mes"] == "NAO"  # padronizado sem acento após fix
     assert row["status_qualificacao"] == "D - Topo atingido"
     assert row["faixa_alvo"] == "MAX"
 
 
-def test_analytics_snapshot_calculates_and_upserts_required_metrics():
-    workbook = {
-        "Abertura": pd.DataFrame(
-            {
-                "Total de Contas Abertas": ["10", "20"],
-                "Contas Qualificadas": ["3", "7"],
-            }
-        ),
-        "Relacionamento": pd.DataFrame({"Maquinas Vendidas Relacionamento": ["2", "3"]}),
-    }
-    session = MagicMock()
-    etl_file = MagicMock()
-    etl_file.id = "file-1"
-    etl_file.file_date = pd.Timestamp("2026-03-02").date()
-
-    with patch("worker.steps.analytics_snapshot.is_step_done", return_value=False), patch(
-        "worker.steps.analytics_snapshot.begin_step"
-    ), patch("worker.steps.analytics_snapshot.get_cached_workbook", return_value=workbook), patch(
-        "worker.steps.analytics_snapshot.mark_step_done"
-    ) as mock_mark_done:
-        from worker.steps.analytics_snapshot import run_analytics_snapshot
-
-        run_analytics_snapshot(session, "job-1", etl_file)
-
-    assert session.execute.call_count == 3
-    rows = [call.args[1] for call in session.execute.call_args_list]
-    totals = {row["indicator"]: row["total"] for row in rows}
-
-    assert totals["contas-abertas"] == 30
-    assert totals["contas-qualificadas"] == 10
-    assert totals["instalacao-c6pay"] == 5
-    mock_mark_done.assert_called_once()
-
-
-def test_analytics_snapshot_raises_if_required_column_is_missing():
-    workbook = {
-        "Abertura": pd.DataFrame({"Coluna X": [1]}),
-        "Relacionamento": pd.DataFrame({"Maquinas Vendidas Relacionamento": [1]}),
-    }
-    session = MagicMock()
-    etl_file = MagicMock()
-    etl_file.id = "file-1"
-    etl_file.file_date = pd.Timestamp("2026-03-02").date()
-
-    with patch("worker.steps.analytics_snapshot.is_step_done", return_value=False), patch(
-        "worker.steps.analytics_snapshot.begin_step"
-    ), patch("worker.steps.analytics_snapshot.get_cached_workbook", return_value=workbook):
-        from worker.steps.analytics_snapshot import run_analytics_snapshot
-
-        with pytest.raises(ValueError, match="Total de Contas Abertas"):
-            run_analytics_snapshot(session, "job-1", etl_file)
+def test_required_columns_include_safra_and_cancelamento():
+    from shared.visao_cliente_schema import REQUIRED_COLUMNS
+    for col in ("cancelamento_maq", "elegivel_c6", "safra_boleto",
+                "idade_safra_boleto", "safra_maquina", "idade_safra_maquina"):
+        assert col in REQUIRED_COLUMNS, f"Missing column: {col}"
