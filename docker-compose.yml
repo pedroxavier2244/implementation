@@ -59,6 +59,9 @@ services:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
       minio:    { condition: service_healthy }
+    networks:
+      - default
+      - cnpj_net
     restart: unless-stopped
 
   worker-etl:
@@ -71,8 +74,17 @@ services:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
       minio:    { condition: service_healthy }
+    networks:
+      - default
+      - cnpj_net
     restart: unless-stopped
 
 volumes:
   postgres_data:
   minio_data:
+
+networks:
+  default: {}
+  cnpj_net:
+    external: true
+    name: cnpj_cnpj_net
