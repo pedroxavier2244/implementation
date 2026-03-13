@@ -73,6 +73,7 @@ def run_extract(session: Session, job_id: str, etl_file) -> None:
             "Visao Cliente",
             "Visao_Cliente",
             "VisaoCliente",
+            "Dados",
         ],
     )
     if sheet_name is None:
