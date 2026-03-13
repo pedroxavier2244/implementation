@@ -215,7 +215,7 @@ def get_visao_cliente_by_documento(
                 rows = [_build_rf_item(documento_consultado, _cache_to_rf_dict(cache), "receita_federal_cache")]
                 total = 1
             else:
-                rf_data = fetch_cnpj(documento_consultado, timeout=settings.CNPJ_API_TIMEOUT)
+                rf_data = fetch_cnpj(documento_consultado, timeout=settings.CNPJ_API_TIMEOUT, api_key=settings.CNPJ_API_KEY)
                 if rf_data:
                     _update_rf_cache(session, documento_consultado, rf_data)
                     rows = [_build_rf_item(documento_consultado, rf_data, "receita_federal_brasilapi")]
