@@ -4,9 +4,9 @@ import logging
 
 import httpx
 
-logger = logging.getLogger(__name__)
+from shared.config import get_settings
 
-CNPJ_API_URL = "http://5.189.163.33/cnpj/{cnpj}"
+logger = logging.getLogger(__name__)
 
 # Mapeamento C6 Bank -> API CNPJ para comparacao de campos
 FIELD_MAP = [
@@ -33,7 +33,8 @@ def fetch_cnpj(cnpj: str, timeout: int = 10, api_key: str = "") -> dict | None:
     Consulta a API CNPJ para um CNPJ.
     Retorna dict com campos normalizados para TEXT, ou None se nao encontrado/erro.
     """
-    url = CNPJ_API_URL.format(cnpj=cnpj)
+    base_url = get_settings().CNPJ_API_URL.rstrip("/")
+    url = f"{base_url}/cnpj/{cnpj}"
     headers = {"X-API-Key": api_key} if api_key else {}
     try:
         response = httpx.get(url, headers=headers, timeout=timeout)
