@@ -1,7 +1,9 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 
-from shared.celery_dispatch import enqueue_task
+logger = logging.getLogger(__name__)
+
 from shared.db import get_db_session
 from shared.models import EtlFile, EtlJobRun
 from worker.celery_app import app
@@ -9,7 +11,6 @@ from worker.steps.checkpoint import mark_step_failed
 from worker.steps.clean import run_clean
 from worker.steps.enrich import run_enrich
 from worker.steps.extract import clear_cached_dataframe, run_extract
-from worker.steps.analytics_snapshot import run_analytics_snapshot
 from worker.steps.stage import run_stage
 from worker.steps.cnpj_verify import run_cnpj_verify
 from worker.steps.upsert import run_upsert
@@ -18,23 +19,6 @@ from worker.steps.validate import run_validate
 
 def compute_retry_delay(retry_number: int) -> int:
     return 300 * (2 ** retry_number)
-
-
-def _send_dead_alert(job_id: str, step_name: str, retry_count: int) -> None:
-    enqueue_task(
-        "notifier.tasks.dispatch_notification",
-        kwargs={
-            "event_type": "ETL_DEAD",
-            "severity": "CRITICAL",
-            "message": f"Job {job_id} failed after {retry_count} retries at step {step_name}",
-            "metadata": {
-                "job_id": job_id,
-                "step": step_name,
-                "retry_count": retry_count,
-            },
-        },
-        queue="notification_jobs",
-    )
 
 
 @app.task(name="worker.tasks.run_etl", bind=True, queue="etl_jobs")
@@ -89,9 +73,6 @@ def run_etl(self, job_id: str | None, file_id: str | None):
             current_step = "upsert"
             run_upsert(session, job_id)
 
-            current_step = "analytics_snapshot"
-            run_analytics_snapshot(session, job_id, etl_file)
-
             current_step = "cnpj_verify"
             run_cnpj_verify(session, job_id)
 
@@ -114,7 +95,10 @@ def run_etl(self, job_id: str | None, file_id: str | None):
                 job.error_message = str(exc)
                 job.finished_at = datetime.now(timezone.utc)
                 clear_cached_dataframe(job_id)
-                _send_dead_alert(job_id, current_step, retry_count)
+                logger.critical(
+                    "Job %s DEAD after %d retries at step %s: %s",
+                    job_id, retry_count, current_step, exc,
+                )
                 return
 
             job.status = "RETRYING"
