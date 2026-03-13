@@ -6,9 +6,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-BRASILAPI_URL = "https://brasilapi.com.br/api/cnpj/v1/{cnpj}"
+CNPJ_API_URL = "http://5.189.163.33/cnpj/{cnpj}"
 
-# Mapeamento C6 Bank -> BrasilAPI para comparacao de campos
+# Mapeamento C6 Bank -> API CNPJ para comparacao de campos
 FIELD_MAP = [
     ("nome_cliente", "razao_social"),
     ("uf",           "uf"),
@@ -28,19 +28,26 @@ def normalize_for_comparison(value) -> str:
     return text
 
 
-def fetch_cnpj(cnpj: str, timeout: int = 10) -> dict | None:
+def fetch_cnpj(cnpj: str, timeout: int = 10, api_key: str = "") -> dict | None:
     """
-    Consulta a BrasilAPI para um CNPJ.
+    Consulta a API CNPJ para um CNPJ.
     Retorna dict com campos normalizados para TEXT, ou None se nao encontrado/erro.
     """
-    url = BRASILAPI_URL.format(cnpj=cnpj)
+    url = CNPJ_API_URL.format(cnpj=cnpj)
+    headers = {"X-API-Key": api_key} if api_key else {}
     try:
-        response = httpx.get(url, timeout=timeout)
+        response = httpx.get(url, headers=headers, timeout=timeout)
+        if response.status_code == 401:
+            logger.error("API CNPJ: chave de acesso invalida ou ausente (401)")
+            return None
         if response.status_code == 404:
-            logger.warning("CNPJ nao encontrado na BrasilAPI: %s", cnpj)
+            logger.warning("CNPJ nao encontrado na API CNPJ: %s", cnpj)
+            return None
+        if response.status_code == 429:
+            logger.warning("API CNPJ: limite de requisicoes atingido (429) para CNPJ %s", cnpj)
             return None
         if response.status_code != 200:
-            logger.warning("BrasilAPI retornou status %s para CNPJ %s", response.status_code, cnpj)
+            logger.warning("API CNPJ retornou status %s para CNPJ %s", response.status_code, cnpj)
             return None
 
         data = response.json()
@@ -48,19 +55,21 @@ def fetch_cnpj(cnpj: str, timeout: int = 10) -> dict | None:
             "razao_social":        str(data.get("razao_social") or ""),
             "nome_fantasia":       str(data.get("nome_fantasia") or ""),
             "situacao_cadastral":  str(data.get("situacao_cadastral") or ""),
-            "descricao_situacao":  str(data.get("descricao_situacao_cadastral") or ""),
+            # descricao_situacao: tenta campo curto e longo para compatibilidade
+            "descricao_situacao":  str(data.get("descricao_situacao") or data.get("descricao_situacao_cadastral") or ""),
             "cnae_fiscal":         str(data.get("cnae_fiscal") or ""),
-            "cnae_descricao":      str(data.get("cnae_fiscal_descricao") or ""),
+            # cnae_descricao: tenta campo curto e longo para compatibilidade
+            "cnae_descricao":      str(data.get("cnae_descricao") or data.get("cnae_fiscal_descricao") or ""),
             "natureza_juridica":   str(data.get("natureza_juridica") or ""),
             "capital_social":      str(data.get("capital_social") or ""),
             "porte":               str(data.get("porte") or ""),
             "uf":                  str(data.get("uf") or ""),
             "municipio":           str(data.get("municipio") or ""),
             "email":               str(data.get("email") or ""),
-            "data_inicio_ativ":    str(data.get("data_inicio_atividade") or ""),
+            "data_inicio_ativ":    str(data.get("data_inicio_atividade") or data.get("data_inicio_ativ") or ""),
         }
     except Exception as exc:
-        logger.warning("Erro ao consultar BrasilAPI para CNPJ %s: %s", cnpj, exc)
+        logger.warning("Erro ao consultar API CNPJ para CNPJ %s: %s", cnpj, exc)
         return None
 
 
