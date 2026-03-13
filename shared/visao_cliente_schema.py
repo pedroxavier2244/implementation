@@ -113,6 +113,18 @@ REQUIRED_COLUMNS = [
     "m2_dias_faltantes",
     "nivel_cartao",
     "nivel_conta",
+    "cancelamento_maq",
+    "elegivel_c6",
+    "safra_boleto",
+    "idade_safra_boleto",
+    "safra_maquina",
+    "idade_safra_maquina",
+    "metrica_ativacao",
+    "metrica_progresso",
+    "metrica_urgencia",
+    "metrica_financeiro",
+    "metrica_intencao",
+    "score_perfil",
 ]
 
 
