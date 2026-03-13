@@ -80,8 +80,8 @@ def test_validate_marks_invalid_nivel_cartao_as_bad_row():
 
         run_validate(session, "job-1", make_file_mock())
 
-    assert session.merge.call_count == 1
-    bad_row = session.merge.call_args.args[0]
+    assert session.bulk_save_objects.call_count == 1
+    bad_row = session.bulk_save_objects.call_args.args[0][0]
     assert "invalid_level_value" in bad_row.reason
     assert "nivel_cartao" in bad_row.reason
     mock_mark_done.assert_called_once()

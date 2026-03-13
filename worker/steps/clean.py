@@ -45,12 +45,20 @@ def run_clean(session: Session, job_id: str) -> None:
     # F06: inclui string vazia "" para garantir que células em branco virem NULL
     _NULL_STRINGS = {"", "nan", "none", "nat", "None", "NaT", "NULL", "null", "<NA>"}
     _NULL_LOWER = {v.lower() for v in _NULL_STRINGS}
+    # F07: artefato do Excel — inteiros lidos como float viram "1.0", "0.0" etc.
+    #      Normaliza "N.0" → "N" para qualquer coluna de texto.
+    _int_float_re = re.compile(r"^(-?\d+)\.0+$")
     for col in dataframe.select_dtypes(include="object").columns:
         dataframe[col] = (
             dataframe[col]
             .astype(str)
             .str.strip()
             .where(lambda s: ~s.str.lower().isin(_NULL_LOWER), other=None)
+        )
+    # Aplica normalização de float-inteiro apenas nas colunas que já viraram string
+    for col in dataframe.select_dtypes(include="object").columns:
+        dataframe[col] = dataframe[col].map(
+            lambda v: _int_float_re.sub(r"\1", v) if isinstance(v, str) else v
         )
 
     dataframe.columns = [normalize_column_name(c) for c in dataframe.columns]
