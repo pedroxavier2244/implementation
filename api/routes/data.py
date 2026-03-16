@@ -4,7 +4,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
-from api.schemas.data import SnapshotItem, VisaoClienteHistoricoOut, VisaoClienteSearchOut
+from api.schemas.data import (
+    ChangeHistoryItem,
+    SnapshotItem,
+    VisaoClienteChangeHistoryOut,
+    VisaoClienteHistoricoOut,
+    VisaoClienteSearchOut,
+)
 from shared.brasilapi import fetch_cnpj
 from shared.config import get_settings
 from shared.db import get_db_session
@@ -66,6 +72,7 @@ RF_EXTRA_COLUMNS = (
 )
 
 OUTPUT_COLUMNS = tuple(dict.fromkeys([*REQUIRED_COLUMNS, *RF_FINAL_COLUMNS, *RF_EXTRA_COLUMNS]))
+CHANGE_HISTORY_TABLE = "visao_cliente_change_history"
 
 
 def _only_digits(value: str) -> str:
@@ -286,4 +293,58 @@ def get_visao_cliente_historico(
         limit=limit,
         offset=offset,
         snapshots=snapshots,
+    )
+
+
+@router.get("/visao-cliente/historico-alteracoes", response_model=VisaoClienteChangeHistoryOut)
+def get_visao_cliente_historico_alteracoes(
+    documento: str = Query(..., description="CPF/CNPJ com ou sem pontuacao"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    documento_consultado = _only_digits(documento)
+    if not documento_consultado:
+        raise HTTPException(status_code=400, detail="documento must contain digits")
+
+    with get_db_session() as session:
+        rows = session.execute(
+            text(
+                f"""
+                SELECT
+                    h.id,
+                    h.data_base,
+                    h.changed_at,
+                    h.etl_job_id,
+                    h.file_id,
+                    f.file_date,
+                    f.filename,
+                    h.change_type,
+                    h.field_name,
+                    h.old_value,
+                    h.new_value,
+                    COUNT(*) OVER() AS __total
+                FROM {CHANGE_HISTORY_TABLE} AS h
+                LEFT JOIN etl_file AS f
+                  ON f.id = h.file_id
+                WHERE h.documento = :documento
+                ORDER BY h.changed_at ASC NULLS LAST, h.id ASC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {"documento": documento_consultado, "limit": limit, "offset": offset},
+        ).mappings().all()
+
+    total = int(rows[0]["__total"]) if rows else 0
+    items = []
+    for row in rows:
+        item = dict(row)
+        item.pop("__total", None)
+        items.append(ChangeHistoryItem.model_validate(item))
+
+    return VisaoClienteChangeHistoryOut(
+        documento_consultado=documento_consultado,
+        total_eventos=total,
+        limit=limit,
+        offset=offset,
+        items=items,
     )

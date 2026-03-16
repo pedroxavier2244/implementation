@@ -33,6 +33,8 @@ def test_upsert_sql_uses_latest_data_base_per_cliente():
     session.execute.side_effect = [
         [("data_base",), ("cd_cpf_cnpj_cliente",), ("nome_cliente",)],
         None,
+        None,
+        None,
     ]
 
     with patch("worker.steps.upsert.is_step_done", return_value=False), patch(
@@ -42,16 +44,25 @@ def test_upsert_sql_uses_latest_data_base_per_cliente():
 
         run_upsert(session, "job-1")
 
-    assert session.execute.call_count == 2
+    assert session.execute.call_count == 4
 
-    sql_text = str(session.execute.call_args_list[1].args[0])
+    insert_new_sql = str(session.execute.call_args_list[1].args[0])
+    assert "visao_cliente_change_history" in insert_new_sql
+    assert "'INSERT'" in insert_new_sql
+
+    insert_updates_sql = str(session.execute.call_args_list[2].args[0])
+    assert "jsonb_build_object" in insert_updates_sql
+    assert "visao_cliente_change_history" in insert_updates_sql
+    assert "jsonb_object_keys" in insert_updates_sql
+
+    sql_text = str(session.execute.call_args_list[3].args[0])
     assert "ROW_NUMBER() OVER" in sql_text
     assert "PARTITION BY cd_cpf_cnpj_cliente" in sql_text
     assert "ORDER BY data_base DESC NULLS LAST" in sql_text
     assert "ON CONFLICT (cd_cpf_cnpj_cliente) WHERE cd_cpf_cnpj_cliente IS NOT NULL" in sql_text
     assert "COALESCE(EXCLUDED.data_base, '') >= COALESCE(final_visao_cliente.data_base, '')" in sql_text
 
-    params = session.execute.call_args_list[1].args[1]
+    params = session.execute.call_args_list[3].args[1]
     assert params["job_id"] == "job-1"
     mock_mark_done.assert_called_once()
 
@@ -60,6 +71,8 @@ def test_upsert_backfills_levels_for_touched_clients():
     session = MagicMock()
     session.execute.side_effect = [
         [("data_base",), ("cd_cpf_cnpj_cliente",), ("limite_cartao",), ("limite_conta",), ("nivel_cartao",), ("nivel_conta",)],
+        None,
+        None,
         None,
         None,
     ]
@@ -71,12 +84,12 @@ def test_upsert_backfills_levels_for_touched_clients():
 
         run_upsert(session, "job-level")
 
-    assert session.execute.call_count == 3
-    backfill_sql = str(session.execute.call_args_list[2].args[0])
+    assert session.execute.call_count == 5
+    backfill_sql = str(session.execute.call_args_list[4].args[0])
     assert "UPDATE final_visao_cliente AS f" in backfill_sql
     assert "nivel_cartao = CASE" in backfill_sql
     assert "nivel_conta = CASE" in backfill_sql
     assert "WHERE EXISTS" in backfill_sql
 
-    params = session.execute.call_args_list[2].args[1]
+    params = session.execute.call_args_list[4].args[1]
     assert params["job_id"] == "job-level"

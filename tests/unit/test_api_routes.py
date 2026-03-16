@@ -246,3 +246,37 @@ def test_get_cnpj_endpoint_fallbacks_to_brasilapi_when_cache_missing(client):
 def test_get_cnpj_endpoint_rejects_invalid_length(client):
     response = client.get("/v1/cnpj/123")
     assert response.status_code == 400
+
+
+def test_get_data_visao_cliente_historico_alteracoes(client):
+    with patch("api.routes.data.get_db_session") as mock_db:
+        mock_session = MagicMock()
+        mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
+        rows_result = MagicMock()
+        rows_result.mappings.return_value.all.return_value = [
+            {
+                "id": 1,
+                "data_base": "2026-02-21 00:00:00",
+                "changed_at": "2026-03-16T12:00:00+00:00",
+                "etl_job_id": "job-1",
+                "file_id": "file-1",
+                "file_date": "2026-02-21",
+                "filename": "Relatorio.xlsx",
+                "change_type": "UPDATE",
+                "field_name": "nome_cliente",
+                "old_value": "EMPRESA A",
+                "new_value": "EMPRESA B",
+                "__total": 1,
+            }
+        ]
+        mock_session.execute.return_value = rows_result
+
+        response = client.get("/v1/data/visao-cliente/historico-alteracoes?documento=12.345.678/0001-90")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["documento_consultado"] == "12345678000190"
+        assert payload["total_eventos"] == 1
+        assert payload["items"][0]["change_type"] == "UPDATE"
+        assert payload["items"][0]["field_name"] == "nome_cliente"

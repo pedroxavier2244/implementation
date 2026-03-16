@@ -11,6 +11,7 @@ from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 
 STAGING_TABLE = STAGING_TABLE_NAME
 FINAL_TABLE = FINAL_TABLE_NAME
+HISTORY_TABLE = "visao_cliente_change_history"
 CONFLICT_COLUMNS = UPSERT_CONFLICT_COLUMNS
 CONFLICT_WHERE = UPSERT_CONFLICT_WHERE
 
@@ -28,6 +29,108 @@ def _numeric_sql_from_text(column_name: str) -> str:
         "''"
         ")::numeric"
     )
+
+
+def _jsonb_payload_sql(alias: str, columns: list[str]) -> str:
+    if not columns:
+        return "'{}'::jsonb"
+
+    payload_parts: list[str] = []
+    for column in columns:
+        payload_parts.append(f"'{column}'")
+        payload_parts.append(f"{alias}.{column}")
+    return f"jsonb_build_object({', '.join(payload_parts)})"
+
+
+def _insert_change_history(
+    session: Session,
+    job_id: str,
+    source_select_sql: str,
+    history_columns: list[str],
+    source_is_newer_sql: str | None,
+) -> None:
+    insert_new_rows_sql = f"""
+        INSERT INTO {HISTORY_TABLE} (
+            documento,
+            etl_job_id,
+            file_id,
+            data_base,
+            change_type,
+            field_name,
+            old_value,
+            new_value,
+            changed_at
+        )
+        SELECT
+            s.cd_cpf_cnpj_cliente,
+            :job_id,
+            j.file_id,
+            s.data_base,
+            'INSERT',
+            NULL,
+            NULL,
+            NULL,
+            CURRENT_TIMESTAMP
+        FROM ({source_select_sql}) AS s
+        JOIN etl_job_run AS j
+          ON j.id = :job_id
+        LEFT JOIN {FINAL_TABLE} AS f
+          ON f.cd_cpf_cnpj_cliente = s.cd_cpf_cnpj_cliente
+        WHERE s.cd_cpf_cnpj_cliente IS NOT NULL
+          AND f.cd_cpf_cnpj_cliente IS NULL
+    """
+    session.execute(text(insert_new_rows_sql), {"job_id": job_id})
+
+    if not history_columns:
+        return
+
+    source_payload_sql = _jsonb_payload_sql("s", history_columns)
+    final_payload_sql = _jsonb_payload_sql("f", history_columns)
+    newer_condition = source_is_newer_sql or "TRUE"
+
+    insert_updated_fields_sql = f"""
+        WITH changed_rows AS (
+            SELECT
+                s.cd_cpf_cnpj_cliente AS documento,
+                :job_id AS etl_job_id,
+                j.file_id AS file_id,
+                s.data_base AS data_base,
+                {source_payload_sql} AS source_payload,
+                {final_payload_sql} AS final_payload
+            FROM ({source_select_sql}) AS s
+            JOIN etl_job_run AS j
+              ON j.id = :job_id
+            JOIN {FINAL_TABLE} AS f
+              ON f.cd_cpf_cnpj_cliente = s.cd_cpf_cnpj_cliente
+            WHERE s.cd_cpf_cnpj_cliente IS NOT NULL
+              AND {newer_condition}
+        )
+        INSERT INTO {HISTORY_TABLE} (
+            documento,
+            etl_job_id,
+            file_id,
+            data_base,
+            change_type,
+            field_name,
+            old_value,
+            new_value,
+            changed_at
+        )
+        SELECT
+            documento,
+            etl_job_id,
+            file_id,
+            data_base,
+            'UPDATE',
+            diff.key,
+            final_payload ->> diff.key,
+            source_payload ->> diff.key,
+            CURRENT_TIMESTAMP
+        FROM changed_rows
+        CROSS JOIN LATERAL jsonb_object_keys(source_payload || final_payload) AS diff(key)
+        WHERE (final_payload ->> diff.key) IS DISTINCT FROM (source_payload ->> diff.key)
+    """
+    session.execute(text(insert_updated_fields_sql), {"job_id": job_id})
 
 
 def run_upsert(session: Session, job_id: str) -> None:
@@ -78,6 +181,20 @@ def run_upsert(session: Session, job_id: str) -> None:
         f"COALESCE(EXCLUDED.data_base, '') >= COALESCE({FINAL_TABLE}.data_base, '')"
         if "data_base" in all_columns
         else None
+    )
+    source_is_newer = (
+        "COALESCE(s.data_base, '') >= COALESCE(f.data_base, '')"
+        if "data_base" in all_columns
+        else None
+    )
+    history_columns = [col for col in update_columns if col != "data_base"]
+
+    _insert_change_history(
+        session,
+        job_id=job_id,
+        source_select_sql=source_select_sql,
+        history_columns=history_columns,
+        source_is_newer_sql=source_is_newer,
     )
 
     if update_columns:

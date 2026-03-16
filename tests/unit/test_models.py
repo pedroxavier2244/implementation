@@ -12,7 +12,8 @@ def test_all_tables_created():
     tables = inspector.get_table_names()
     expected = [
         "etl_file", "etl_job_run", "etl_job_step",
-        "etl_bad_rows", "alert_event", "alert_event_channel"
+        "etl_bad_rows", "alert_event", "alert_event_channel",
+        "analytics_indicator_snapshot", "visao_cliente_change_history",
     ]
     for table in expected:
         assert table in tables, f"Missing table: {table}"
@@ -138,3 +139,16 @@ def test_cnpj_divergencia_table_exists():
     assert "campo" in cols
     assert "valor_c6" in cols
     assert "valor_rf" in cols
+
+
+def test_visao_cliente_change_history_table_exists():
+    from shared.models import VisaoClienteChangeHistory
+
+    assert VisaoClienteChangeHistory.__tablename__ == "visao_cliente_change_history"
+    cols = {c.name for c in VisaoClienteChangeHistory.__table__.columns}
+    assert "documento" in cols
+    assert "etl_job_id" in cols
+    assert "change_type" in cols
+    assert "field_name" in cols
+    assert "old_value" in cols
+    assert "new_value" in cols

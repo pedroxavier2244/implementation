@@ -1,4 +1,9 @@
-from api.schemas.data import SnapshotItem, VisaoClienteHistoricoOut
+from api.schemas.data import (
+    ChangeHistoryItem,
+    SnapshotItem,
+    VisaoClienteChangeHistoryOut,
+    VisaoClienteHistoricoOut,
+)
 
 
 def test_snapshot_item_with_no_diff():
@@ -46,6 +51,35 @@ def test_snapshot_item_requires_dados():
             etl_job_id=None,
             campos_alterados=None,
         )
+
+
+def test_change_history_item_structure():
+    item = ChangeHistoryItem(
+        id=1,
+        data_base="2026-02-21 00:00:00",
+        changed_at="2026-03-16T12:00:00Z",
+        etl_job_id="job-1",
+        file_id="file-1",
+        file_date="2026-02-21",
+        filename="Relatorio.xlsx",
+        change_type="UPDATE",
+        field_name="nome_cliente",
+        old_value="EMPRESA A",
+        new_value="EMPRESA B",
+    )
+    assert item.change_type == "UPDATE"
+    assert item.field_name == "nome_cliente"
+
+
+def test_change_history_out_structure():
+    out = VisaoClienteChangeHistoryOut(
+        documento_consultado="12345678000190",
+        total_eventos=1,
+        limit=100,
+        offset=0,
+        items=[],
+    )
+    assert out.total_eventos == 1
 
 
 def test_compute_diff_detects_changes():
