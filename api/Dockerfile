@@ -5,6 +5,7 @@ COPY requirements/base.txt requirements/base.txt
 RUN pip install --no-cache-dir -r requirements/api.txt
 COPY alembic.ini alembic.ini
 COPY migrations/ migrations/
+COPY scripts/ scripts/
 COPY shared/ shared/
 COPY api/ api/
 EXPOSE 8000
