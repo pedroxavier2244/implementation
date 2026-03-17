@@ -46,11 +46,16 @@ def _jsonb_payload_sql(alias: str, columns: list[str]) -> str:
     if not columns:
         return "'{}'::jsonb"
 
-    payload_parts: list[str] = []
-    for column in columns:
-        payload_parts.append(f"'{column}'")
-        payload_parts.append(f"{alias}.{column}")
-    return f"jsonb_build_object({', '.join(payload_parts)})"
+    chunks: list[str] = []
+    # PostgreSQL aceita no maximo 100 argumentos por funcao.
+    # Cada par chave/valor consome 2 argumentos em jsonb_build_object.
+    for index in range(0, len(columns), 40):
+        payload_parts: list[str] = []
+        for column in columns[index:index + 40]:
+            payload_parts.append(f"'{column}'")
+            payload_parts.append(f"{alias}.{column}")
+        chunks.append(f"jsonb_build_object({', '.join(payload_parts)})")
+    return " || ".join(chunks)
 
 
 def _load_staging_columns(session) -> list[str]:

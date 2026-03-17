@@ -481,3 +481,4 @@ Antes de publicar:
 - padronizar documentacao historica do repositorio com o escopo real do `api.main`
 - normalizar valores literais `"nan"` para `null` antes da exposicao
 - registrar de forma formal as tabelas e canais usados pelo notifier
+
