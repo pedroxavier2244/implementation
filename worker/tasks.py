@@ -23,11 +23,13 @@ def compute_retry_delay(retry_number: int) -> int:
 
 @app.task(name="worker.tasks.run_etl", bind=True, queue="etl_jobs")
 def run_etl(self, job_id: str | None, file_id: str | None):
+    # 1. Create/fetch job and commit immediately so it's visible in the API
     with get_db_session() as session:
         if job_id:
             job = session.query(EtlJobRun).filter_by(id=job_id).first()
             if job is None:
                 raise ValueError(f"Job not found: {job_id}")
+            file_id = job.file_id
         else:
             etl_file = session.query(EtlFile).filter_by(id=file_id).first()
             if etl_file is None:
@@ -42,36 +44,45 @@ def run_etl(self, job_id: str | None, file_id: str | None):
                 max_retries=3,
             )
             session.add(job)
-            session.flush()
             job_id = job.id
 
         job.status = "RUNNING"
         if job.started_at is None:
             job.started_at = datetime.now(timezone.utc)
+    # session exits here → job committed and immediately visible in the API
 
-        etl_file = session.query(EtlFile).filter_by(id=job.file_id).first()
+    # 2. Run the full pipeline in a separate session, committing after each step
+    with get_db_session() as session:
+        job = session.query(EtlJobRun).filter_by(id=job_id).first()
+        etl_file = session.query(EtlFile).filter_by(id=file_id).first()
         if etl_file is None:
-            raise ValueError(f"File not found: {job.file_id}")
+            raise ValueError(f"File not found: {file_id}")
 
         current_step = "unknown"
         try:
             current_step = "extract"
             run_extract(session, job_id, etl_file)
+            session.commit()
 
             current_step = "clean"
             run_clean(session, job_id)
+            session.commit()
 
             current_step = "enrich"
             run_enrich(session, job_id)
+            session.commit()
 
             current_step = "validate"
             run_validate(session, job_id, etl_file)
+            session.commit()
 
             current_step = "stage"
             run_stage(session, job_id)
+            session.commit()
 
             current_step = "upsert"
             run_upsert(session, job_id)
+            session.commit()
 
             current_step = "cnpj_verify"
             run_cnpj_verify(session, job_id)
@@ -82,7 +93,6 @@ def run_etl(self, job_id: str | None, file_id: str | None):
             clear_cached_dataframe(job_id)
 
         except Exception as exc:
-            # Clear failed transaction state before persisting failure metadata.
             session.rollback()
             mark_step_failed(session, job_id, current_step, str(exc))
 
