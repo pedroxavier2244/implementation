@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import redis as redis_lib
 
-from api.routes import cnpj, data, files, jobs
+from api.routes import data, files, jobs
 from shared.config import get_settings
 from shared.db import get_engine
 
@@ -16,7 +16,6 @@ app = FastAPI(title="ETL System API", version="1.0.0")
 app.include_router(files.router, prefix="/v1")
 app.include_router(jobs.router, prefix="/v1")
 app.include_router(data.router, prefix="/v1")
-app.include_router(cnpj.router, prefix="/v1")
 
 if Instrumentator is not None:
     Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
