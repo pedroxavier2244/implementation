@@ -30,6 +30,7 @@ def run_stage(session: Session, job_id: str) -> None:
     df_to_insert.to_sql(
         STAGING_TABLE,
         con=session.get_bind(),
+        schema="etl",
         if_exists="append",
         index=False,
         method="multi",

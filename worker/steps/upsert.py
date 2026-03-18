@@ -148,6 +148,7 @@ def run_upsert(session: Session, job_id: str) -> None:
             "SELECT column_name "
             "FROM information_schema.columns "
             "WHERE table_name = :table_name "
+            "  AND table_schema = 'etl' "
             "ORDER BY ordinal_position"
         ),
         {"table_name": STAGING_TABLE},
