@@ -65,6 +65,7 @@ def _load_staging_columns(session) -> list[str]:
             SELECT column_name
             FROM information_schema.columns
             WHERE table_name = :table_name
+              AND table_schema = 'etl'
             ORDER BY ordinal_position
             """
         ),
@@ -115,8 +116,7 @@ def _load_jobs(session) -> list[JobRow]:
 
 def _history_table_exists(session) -> bool:
     return session.execute(
-        text("SELECT to_regclass(:table_name)"),
-        {"table_name": HISTORY_TABLE},
+        text("SELECT to_regclass('etl.visao_cliente_change_history')"),
     ).scalar_one() is not None
 
 
