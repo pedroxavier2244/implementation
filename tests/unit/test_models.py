@@ -1,11 +1,25 @@
 import pytest
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 
+def _sqlite_engine():
+    """Create an in-memory SQLite engine that strips the 'etl' schema prefix.
+
+    SQLite does not support named schemas.  Using schema_translate_map tells
+    SQLAlchemy to silently drop the schema qualifier when generating DDL/DML,
+    so all models declared with schema='etl' still work against SQLite.
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        execution_options={"schema_translate_map": {"etl": None}},
+    )
+    return engine
+
+
 def test_all_tables_created():
-    engine = create_engine("sqlite:///:memory:")
+    engine = _sqlite_engine()
     from shared.models import Base
     Base.metadata.create_all(engine)
     inspector = inspect(engine)
@@ -20,7 +34,7 @@ def test_all_tables_created():
 
 
 def test_etl_file_unique_constraint():
-    engine = create_engine("sqlite:///:memory:")
+    engine = _sqlite_engine()
     from shared.models import Base, EtlFile
     Base.metadata.create_all(engine)
     with Session(engine) as s:
@@ -46,7 +60,7 @@ def test_etl_file_unique_constraint():
 
 
 def test_etl_job_run_relationships():
-    engine = create_engine("sqlite:///:memory:")
+    engine = _sqlite_engine()
     from shared.models import Base, EtlFile, EtlJobRun, EtlJobStep
     Base.metadata.create_all(engine)
     with Session(engine) as s:
@@ -86,7 +100,7 @@ def test_etl_job_run_relationships():
 
 
 def test_alert_event_dedup_key_unique():
-    engine = create_engine("sqlite:///:memory:")
+    engine = _sqlite_engine()
     from shared.models import Base, AlertEvent
     Base.metadata.create_all(engine)
     with Session(engine) as s:
@@ -113,7 +127,7 @@ def test_alert_event_dedup_key_unique():
 
 
 def test_metadata_column_name_is_metadata_not_metadata_underscore():
-    engine = create_engine("sqlite:///:memory:")
+    engine = _sqlite_engine()
     from shared.models import Base
     Base.metadata.create_all(engine)
     inspector = inspect(engine)
@@ -152,3 +166,50 @@ def test_visao_cliente_change_history_table_exists():
     assert "field_name" in cols
     assert "old_value" in cols
     assert "new_value" in cols
+
+
+def test_all_etl_models_use_etl_schema():
+    """All ORM models managed by etl-system must declare schema='etl'."""
+    from shared.models import (
+        EtlFile, EtlJobRun, EtlJobStep, EtlBadRow,
+        AlertEvent, AlertEventChannel,
+        AnalyticsIndicatorSnapshot, VisaoClienteChangeHistory,
+    )
+    models = [
+        EtlFile, EtlJobRun, EtlJobStep, EtlBadRow,
+        AlertEvent, AlertEventChannel,
+        AnalyticsIndicatorSnapshot, VisaoClienteChangeHistory,
+    ]
+    for model in models:
+        assert model.__table__.schema == "etl", (
+            f"{model.__name__} must have schema='etl', got: {model.__table__.schema}"
+        )
+
+
+def test_foreign_keys_are_schema_qualified():
+    """All ForeignKey references must use 'etl.<table>' format."""
+    from shared.models import (
+        EtlJobRun, EtlJobStep, EtlBadRow,
+        AlertEventChannel, AnalyticsIndicatorSnapshot, VisaoClienteChangeHistory,
+    )
+    from sqlalchemy import inspect as sa_inspect
+
+    expected_fks = {
+        "EtlJobRun": {"etl.etl_file.id"},
+        "EtlJobStep": {"etl.etl_job_run.id"},
+        "EtlBadRow": {"etl.etl_job_run.id"},
+        "AlertEventChannel": {"etl.alert_event.id"},
+        "AnalyticsIndicatorSnapshot": {"etl.etl_job_run.id", "etl.etl_file.id"},
+        "VisaoClienteChangeHistory": {"etl.etl_job_run.id", "etl.etl_file.id"},
+    }
+    for model_cls in [EtlJobRun, EtlJobStep, EtlBadRow, AlertEventChannel,
+                      AnalyticsIndicatorSnapshot, VisaoClienteChangeHistory]:
+        mapper = sa_inspect(model_cls)
+        actual = {
+            fk.target_fullname
+            for col in mapper.columns
+            for fk in col.foreign_keys
+        }
+        assert actual == expected_fks[model_cls.__name__], (
+            f"{model_cls.__name__} FK mismatch: {actual}"
+        )
