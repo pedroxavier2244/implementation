@@ -20,7 +20,7 @@ def run_stage(session: Session, job_id: str) -> None:
         raise RuntimeError("No dataframe in cache")
 
     session.execute(
-        text(f"DELETE FROM {STAGING_TABLE} WHERE etl_job_id = :job_id"),
+        text(f"DELETE FROM etl.{STAGING_TABLE} WHERE etl_job_id = :job_id"),
         {"job_id": job_id},
     )
 
