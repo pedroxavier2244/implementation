@@ -54,7 +54,6 @@ def _fmt_brl(value) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "R$ 0,00"
     s = f"{float(value):,.2f}"
-    # troca separadores: 1,234.56 → 1.234,56
     s = s.replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {s}"
 
@@ -77,17 +76,19 @@ def _compute_total_tpv(dataframe) -> None:
 
 def _compute_status_cartao(dataframe) -> None:
     """
-    STATUS_CARTAO — 8 categorias baseadas em limite, ativação e spending.
+    STATUS_CARTAO — 10 categorias baseadas em limite, ativação e spending.
 
-    Lógica (por prioridade):
-      VALIDAR                                  : dt_ativ presente mas sem limite de crédito
-      ATIVOU CREDITO - UTILIZANDO              : crédito ativo + spending > 0
-      ATIVOU CREDITO - NAO UTILIZANDO          : crédito ativo, spending = 0
-      NAO ATIVOU CREDITO (COM CDB)             : tem limite + CDB alocado, sem ativação
-      NAO ATIVOU CREDITO (SEM CDB)             : tem limite, sem CDB, sem ativação
-      DEBITO - UTILIZANDO                      : só débito (sem limite) + spending > 0
-      DEBITO - NAO UTILIZANDO                  : só débito (sem limite), spending = 0
-      NAO POSSUI CARTAO                        : nenhum dos anteriores
+    Lógica (por prioridade, espelho do IFS da planilha modelo):
+      NAO POSSUI CARTAO                                  : sem limite, sem entrega, sem ativação, sem spending
+      DEBITO - UTILIZANDO                                : sem limite, com entrega, sem ativação, com spending
+      DEBITO - NAO UTILIZANDO                            : sem limite, com entrega, sem ativação, sem spending
+      NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (SEM CDB)  : tem limite, sem ativação, sem spending, sem CDB
+      NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (COM CDB)  : tem limite, sem ativação, sem spending, com CDB
+      NAO ATIVOU CREDITO - UTILIZA DEBITO (SEM CDB)      : tem limite, sem ativação, com spending, sem CDB
+      NAO ATIVOU CREDITO - UTILIZA DEBITO (COM CDB)      : tem limite, sem ativação, com spending, com CDB
+      ATIVOU CREDITO - UTILIZANDO                        : tem limite, com ativação, com spending
+      ATIVOU CREDITO - NAO UTILIZANDO                    : tem limite, com ativação, sem spending
+      VALIDAR                                            : demais casos
     """
     import numpy as np
 
@@ -105,24 +106,28 @@ def _compute_status_cartao(dataframe) -> None:
 
     dataframe["status_cartao"] = np.select(
         [
-            has_ativ & ~has_credit,
-            has_ativ & has_credit & is_spending,
-            has_ativ & has_credit & ~is_spending,
-            has_entrega & ~has_ativ & has_credit & has_cdb,
-            has_entrega & ~has_ativ & has_credit & ~has_cdb,
-            has_entrega & ~has_ativ & ~has_credit & is_spending,
-            has_entrega & ~has_ativ & ~has_credit & ~is_spending,
+            ~has_credit & ~has_cdb & ~has_entrega & ~has_ativ & ~is_spending,
+            ~has_credit & has_entrega & ~has_ativ & is_spending,
+            ~has_credit & has_entrega & ~has_ativ & ~is_spending,
+            has_credit & ~has_ativ & ~is_spending & ~has_cdb,
+            has_credit & ~has_ativ & ~is_spending & has_cdb,
+            has_credit & ~has_ativ & is_spending & ~has_cdb,
+            has_credit & ~has_ativ & is_spending & has_cdb,
+            has_credit & has_ativ & is_spending,
+            has_credit & has_ativ & ~is_spending,
         ],
         [
-            "VALIDAR",
-            "ATIVOU CREDITO - UTILIZANDO",
-            "ATIVOU CREDITO - NAO UTILIZANDO",
-            "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (COM CDB)",
-            "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (SEM CDB)",
+            "NAO POSSUI CARTAO",
             "DEBITO - UTILIZANDO",
             "DEBITO - NAO UTILIZANDO",
+            "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (SEM CDB)",
+            "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (COM CDB)",
+            "NAO ATIVOU CREDITO - UTILIZA DEBITO (SEM CDB)",
+            "NAO ATIVOU CREDITO - UTILIZA DEBITO (COM CDB)",
+            "ATIVOU CREDITO - UTILIZANDO",
+            "ATIVOU CREDITO - NAO UTILIZANDO",
         ],
-        default="NAO POSSUI CARTAO",
+        default="VALIDAR",
     )
 
 
@@ -132,41 +137,52 @@ def _compute_status_cartao(dataframe) -> None:
 
 def _compute_status_maq(dataframe) -> None:
     """
-    STATUS_MAQ — 5 categorias baseadas em instalação, ativação e atividade 30d.
+    STATUS_MAQ — 10 categorias baseadas em proposta, instalação, ativação, cancelamento e TPV.
 
-    Lógica (por prioridade):
-      ATIVA - TRANSACIONANDO  : máquina ativada + c6pay_ativa_30 = 1
-      ATIVA - INATIVA 30D     : máquina ativada + c6pay_ativa_30 = 0
-      INSTALADA - NAO ATIVADA : instalada mas sem ativação
-      ELEGIVEL - SEM VENDA    : elegível mas sem instalação
-      NAO ELEGIVEL            : demais casos
+    Depende de total_tpv (deve ser calculado antes).
     """
     import numpy as np
 
+    status_proposta = dataframe["status_proposta_sf_pay"].astype(str).str.strip()
     fl_eleg = _coerce_numeric(dataframe["fl_elegivel_venda_c6pay"]).fillna(0)
     dt_install = _coerce_datetime(dataframe["dt_install_maq"])
     dt_ativ = _coerce_datetime(dataframe["dt_ativacao_pay"])
     c6pay_30 = _coerce_numeric(dataframe["c6pay_ativa_30"]).fillna(0)
+    dt_cancel = _coerce_datetime(dataframe["dt_cancelamento_maq"])
+    total_tpv = _coerce_numeric(dataframe["total_tpv"]).fillna(0)
 
+    is_em_analise = status_proposta == "EM ANALISE C6 | AGUARDANDO APROVACAO DO CLIENTE"
     has_install = ~dt_install.isna()
     has_ativ = ~dt_ativ.isna()
     is_eleg = fl_eleg == 1
     is_active_30 = c6pay_30 == 1
+    has_cancel = ~dt_cancel.isna()
+    has_tpv = total_tpv > 0
 
     dataframe["status_maq"] = np.select(
         [
-            has_ativ & is_active_30,
-            has_ativ & ~is_active_30,
-            has_install & ~has_ativ,
-            is_eleg & ~has_install,
+            is_em_analise,
+            has_install & has_ativ & has_cancel & has_tpv,
+            has_install & ~has_ativ & has_cancel & ~has_tpv,
+            has_install & ~has_ativ & ~has_cancel & has_tpv,
+            has_install & has_ativ & ~is_active_30 & ~has_cancel & has_tpv,
+            has_install & has_ativ & is_active_30 & ~has_cancel & has_tpv,
+            has_install & ~has_ativ & ~is_active_30 & ~has_cancel,
+            is_eleg & ~has_install & ~has_ativ & ~is_active_30 & ~has_cancel,
+            ~is_eleg & ~has_install & ~has_ativ & ~is_active_30 & ~has_cancel & ~has_tpv,
         ],
         [
-            "ATIVA - TRANSACIONANDO",
+            "PEDIDO EM ANALISE",
+            "CANCELADA - COM TPV",
+            "CANCELADA",
+            "INSTALADA - COM TPV SEM ATIVAR",
             "ATIVA - INATIVA 30D",
+            "ATIVA - TRANSACIONANDO",
             "INSTALADA - NAO ATIVADA",
             "ELEGIVEL - SEM VENDA",
+            "NAO ELEGIVEL",
         ],
-        default="NAO ELEGIVEL",
+        default="VERIFICAR",
     )
 
 
@@ -176,31 +192,39 @@ def _compute_status_maq(dataframe) -> None:
 
 def _compute_status_bolcob(dataframe) -> None:
     """
-    STATUS_BOLCBOB — categorias baseadas em cadastro e histórico de liquidação.
+    STATUS_BOLCBOB — 5 categorias baseadas em cadastro, emissão e liquidação.
 
-    Lógica:
-      BOLETO CADASTRADO - NUNCA EMITIDO : fl_bolcob=1, sem liquidação prévia
-      BOLETO CADASTRADO - JA EMITIDO    : fl_bolcob=1, com liquidação prévia
-      SEM BOLETO CADASTRADO             : fl_bolcob=0 ou nulo
+    Lógica (espelho do IFS da planilha modelo):
+      SEM BOLETO CADASTRADO           : fl_bolcob = 0
+      BOLETO CADASTRADO - NUNCA EMITIDO : fl_bolcob = 1, sem liquidação prévia
+      BOLETO EMITIDO MAS NAO LIQUIDADO  : fl_bolcob = 1, com liquidação, sem liquidação no mês
+      ATIVO - UTILIZANDO              : fl_bolcob = 1, com liquidação no mês
+      VERIFICAR                       : demais casos
     """
     import numpy as np
 
     fl_bolcob = _coerce_numeric(dataframe["fl_bolcob_cadastrado"]).fillna(0)
     dt_prim = _coerce_datetime(dataframe["dt_prim_liq_bolcob"])
+    qtd_liq_mtd = _coerce_numeric(dataframe["qtd_bolcob_liq_mtd"]).fillna(0)
 
     is_cadastrado = fl_bolcob == 1
     has_prim = ~dt_prim.isna()
+    has_liq_mtd = qtd_liq_mtd > 0
 
     dataframe["status_bolcbob"] = np.select(
         [
+            ~is_cadastrado,
             is_cadastrado & ~has_prim,
-            is_cadastrado & has_prim,
+            is_cadastrado & has_prim & ~has_liq_mtd,
+            is_cadastrado & has_prim & has_liq_mtd,
         ],
         [
+            "SEM BOLETO CADASTRADO",
             "BOLETO CADASTRADO - NUNCA EMITIDO",
-            "BOLETO CADASTRADO - JA EMITIDO",
+            "BOLETO EMITIDO MAS NAO LIQUIDADO",
+            "ATIVO - UTILIZANDO",
         ],
-        default="SEM BOLETO CADASTRADO",
+        default="VERIFICAR",
     )
 
 
@@ -216,7 +240,6 @@ def _compute_insight_columns(dataframe) -> None:
     """
     import pandas as pd
 
-    # -- helpers --
     def _fmt_date(series):
         dt = _coerce_datetime(series)
         return dt.dt.strftime("%d/%m/%Y").where(~dt.isna(), "")
@@ -248,20 +271,28 @@ def _compute_insight_columns(dataframe) -> None:
         "Cartão de débito entregue em " + fmt_entrega + ", utilizando " + fmt_spending + " no mês.",
     )
     insight_cartao = insight_cartao.where(
-        sc != "ATIVOU CREDITO - NAO UTILIZANDO",
-        "Crédito ativo (limite " + fmt_lim + ") desde " + fmt_ativ_cred + ", sem spending no mês.",
-    )
-    insight_cartao = insight_cartao.where(
-        sc != "ATIVOU CREDITO - UTILIZANDO",
-        "Crédito ativo (limite " + fmt_lim + "), spending de " + fmt_spending + " no mês.",
+        sc != "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (SEM CDB)",
+        "Possui limite de " + fmt_lim + " mas não ativou o crédito. Sem CDB.",
     )
     insight_cartao = insight_cartao.where(
         sc != "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (COM CDB)",
         "Possui limite de " + fmt_lim + " e CDB alocado de " + fmt_aloc + " mas não ativou o crédito.",
     )
     insight_cartao = insight_cartao.where(
-        sc != "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (SEM CDB)",
-        "Possui limite de " + fmt_lim + " mas não ativou o crédito. Sem CDB.",
+        sc != "NAO ATIVOU CREDITO - UTILIZA DEBITO (SEM CDB)",
+        "Limite de " + fmt_lim + " disponível, usando débito (" + fmt_spending + " no mês). Oportunidade: ativar crédito.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "NAO ATIVOU CREDITO - UTILIZA DEBITO (COM CDB)",
+        "Limite de " + fmt_lim + " + CDB (" + fmt_aloc + "), usando débito (" + fmt_spending + " no mês). Oportunidade: ativar crédito.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "ATIVOU CREDITO - NAO UTILIZANDO",
+        "Crédito ativo (limite " + fmt_lim + ") desde " + fmt_ativ_cred + ", sem spending no mês.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "ATIVOU CREDITO - UTILIZANDO",
+        "Crédito ativo (limite " + fmt_lim + "), spending de " + fmt_spending + " no mês.",
     )
     dataframe["insight_cartao"] = insight_cartao
 
@@ -271,12 +302,18 @@ def _compute_insight_columns(dataframe) -> None:
     sm = dataframe["status_maq"].astype(str)
     fmt_install = _fmt_date(dataframe["dt_install_maq"])
     fmt_ativ_pay = _fmt_date(dataframe["dt_ativacao_pay"])
+    fmt_cancel = _fmt_date(dataframe["dt_cancelamento_maq"])
     fmt_ult_trans = _fmt_date(dataframe["dt_ult_trans_pay"])
+    fmt_total_tpv = _fmt_series_brl(dataframe["total_tpv"])
     fmt_m0 = _fmt_series_brl(dataframe["tpv_m0"])
     fmt_m1 = _fmt_series_brl(dataframe["tpv_m1"])
     fmt_m2 = _fmt_series_brl(dataframe["tpv_m2"])
 
-    insight_maq = pd.Series("Cliente não elegível para C6 Pay.", index=dataframe.index, dtype=object)
+    insight_maq = pd.Series("Verificar situação da maquininha.", index=dataframe.index, dtype=object)
+    insight_maq = insight_maq.where(
+        sm != "NAO ELEGIVEL",
+        "Cliente não elegível para C6 Pay.",
+    )
     insight_maq = insight_maq.where(
         sm != "ELEGIVEL - SEM VENDA",
         "Elegível para C6 Pay.",
@@ -286,14 +323,31 @@ def _compute_insight_columns(dataframe) -> None:
         "Maquininha instalada em " + fmt_install + ", aguardando ativação.",
     )
     insight_maq = insight_maq.where(
+        sm != "INSTALADA - COM TPV SEM ATIVAR",
+        "Maquininha instalada em " + fmt_install + " com TPV de " + fmt_total_tpv + " mas ainda não ativada.",
+    )
+    insight_maq = insight_maq.where(
+        sm != "CANCELADA",
+        "Maquininha instalada em " + fmt_install + " e cancelada em " + fmt_cancel + " sem uso.",
+    )
+    insight_maq = insight_maq.where(
+        sm != "CANCELADA - COM TPV",
+        "Maquininha cancelada em " + fmt_cancel + " com TPV acumulado de " + fmt_total_tpv + ". Verificar reativação.",
+    )
+    insight_maq = insight_maq.where(
         sm != "ATIVA - INATIVA 30D",
         "Maquininha ativa desde " + fmt_ativ_pay
-        + ", sem transações nos últimos 30 dias. Última: " + fmt_ult_trans + ".",
+        + ", sem transações nos últimos 30 dias. Última: "
+        + fmt_ult_trans.where(fmt_ult_trans != "", "não registrada") + ".",
     )
     insight_maq = insight_maq.where(
         sm != "ATIVA - TRANSACIONANDO",
         "Maquininha ativa (desde " + fmt_ativ_pay + "): TPV M0 "
         + fmt_m0 + " | M1 " + fmt_m1 + " | M2 " + fmt_m2 + ".",
+    )
+    insight_maq = insight_maq.where(
+        sm != "PEDIDO EM ANALISE",
+        "Proposta em análise C6 / aguardando aprovação do cliente.",
     )
     dataframe["insight_maq"] = insight_maq
 
@@ -301,20 +355,39 @@ def _compute_insight_columns(dataframe) -> None:
     # insight_bolcob
     # ------------------------------------------------------------------ #
     sb = dataframe["status_bolcbob"].astype(str)
-    fmt_potencial = _fmt_series_brl(dataframe["tpv_bolcob_potencial"])
 
-    insight_bolcob = pd.Series("Sem boleto cadastrado.", index=dataframe.index, dtype=object)
+    # sufixo de idade do CNPJ: " CNPJ com mais de 1 ano de fundação"
+    dt_fundacao = _coerce_datetime(dataframe["dt_fundacao_empresa"])
+    data_base_dt = _coerce_datetime(dataframe["data_base"])
+    has_fundacao = ~dt_fundacao.isna() & ~data_base_dt.isna()
+    dias_fundacao = (data_base_dt - dt_fundacao).dt.days.fillna(0)
+    cnpj_age_suffix = pd.Series("", index=dataframe.index, dtype=object)
+    cnpj_age_suffix[has_fundacao & (dias_fundacao > 365)] = " CNPJ com mais de 1 ano de fundação"
+
+    fmt_ult_emissao = _fmt_date(dataframe["dt_ult_emissao_bolcob"])
+    qtd_emitido = dataframe["qtd_bolcob_emtd_mtd"].astype(str).str.replace(r"\.0$", "", regex=True).replace("nan", "0")
+    qtd_liq = dataframe["qtd_bolcob_liq_mtd"].astype(str).str.replace(r"\.0$", "", regex=True).replace("nan", "0")
+    fmt_val_emitido = _fmt_series_brl(dataframe["vl_bolcob_emtd_mtd"])
+    fmt_val_liq = _fmt_series_brl(dataframe["vl_bolcob_liq_mtd"])
+
+    insight_bolcob = pd.Series("Verificar situação do boleto.", index=dataframe.index, dtype=object)
     insight_bolcob = insight_bolcob.where(
         sb != "SEM BOLETO CADASTRADO",
-        "Sem boleto cadastrado. Potencial estimado: " + fmt_potencial + ".",
+        "Sem boleto cadastrado." + cnpj_age_suffix,
     )
     insight_bolcob = insight_bolcob.where(
         sb != "BOLETO CADASTRADO - NUNCA EMITIDO",
-        "Boleto cadastrado mas nunca emitido.",
+        "Boleto cadastrado mas nunca emitido." + cnpj_age_suffix,
     )
     insight_bolcob = insight_bolcob.where(
-        sb != "BOLETO CADASTRADO - JA EMITIDO",
-        "Boleto ativo.",
+        sb != "BOLETO EMITIDO MAS NAO LIQUIDADO",
+        "Boleto emitido (última emissão: " + fmt_ult_emissao + ") sem liquidação no mês.",
+    )
+    insight_bolcob = insight_bolcob.where(
+        sb != "ATIVO - UTILIZANDO",
+        "Boleto ativo: " + qtd_emitido + " emitido(s) (" + fmt_val_emitido
+        + ") e " + qtd_liq + " liquidado(s) (" + fmt_val_liq
+        + ") no mês. Última emissão: " + fmt_ult_emissao + ".",
     )
     dataframe["insight_bolcob"] = insight_bolcob
 
@@ -359,10 +432,8 @@ def _compute_gap_columns(dataframe) -> None:
     """
     Calcula as colunas de faixa, threshold, gap e percentual de progresso.
 
-    Nomes seguem exatamente o modelo:
-      faixa_maximo (era faixa_max)
-      threshold_cash_in (era threshiold_cash_in)
-      thereshold_saldo_medio (nome do modelo, com typo)
+    FAIXA_MAXIMO = MAX(cash_in, domicilio, saldo_medio, cash_in_global)
+    Nota: faixa_spending não entra no MAX (modelo RELATORIO.FORMULASS).
     """
     import numpy as np
     import pandas as pd
@@ -373,8 +444,9 @@ def _compute_gap_columns(dataframe) -> None:
     faixa_spending = _coerce_numeric(dataframe["faixa_spending"]).fillna(0)
     faixa_global = _coerce_numeric(dataframe["faixa_cash_in_global"]).fillna(0)
 
+    # FAIXA_MAXIMO: sem faixa_spending (modelo RELATORIO.FORMULASS)
     faixa_frame = pd.concat(
-        [faixa_cash, faixa_domicilio, faixa_saldo, faixa_spending, faixa_global],
+        [faixa_cash, faixa_domicilio, faixa_saldo, faixa_global],
         axis=1,
     )
     faixa_maximo = faixa_frame.max(axis=1).fillna(0).astype(int)
@@ -457,6 +529,50 @@ def _compute_gap_columns(dataframe) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Colunas derivadas: status_qualificacao
+# ---------------------------------------------------------------------------
+
+def _compute_status_qualificacao(dataframe) -> None:
+    """
+    STATUS_QUALIFICAÇÃO — 5 categorias + default baseadas em comissão recebida,
+    previsão e faixa_alvo.
+
+    Depende de faixa_alvo (deve ser calculado antes via _compute_gap_columns).
+
+    Categorias:
+      A: Nunca qualificou    — ja_pago=0 e previsao=0
+      B: Primeira qualificação — ja_pago=0 e previsao>0
+      C: Qualificação recorrente — ja_pago>0 e previsao>0
+      D: Topo atingido        — ja_pago>0, previsao=0, faixa_alvo="MAX"
+      E: Perdeu qualificação  — ja_pago>0, previsao=0, faixa_alvo≠"MAX"
+      -: Não classificado     — demais casos
+    """
+    import numpy as np
+
+    ja_pago = _coerce_numeric(dataframe["ja_pago_comiss"]).fillna(0)
+    previsao = _coerce_numeric(dataframe["previsao_comiss"]).fillna(0)
+    faixa_alvo = dataframe["faixa_alvo"].astype(str)
+
+    dataframe["status_qualificacao"] = np.select(
+        [
+            (ja_pago == 0) & (previsao == 0),
+            (ja_pago == 0) & (previsao > 0),
+            (ja_pago > 0) & (previsao > 0),
+            (ja_pago > 0) & (previsao == 0) & (faixa_alvo == "MAX"),
+            (ja_pago > 0) & (previsao == 0) & (faixa_alvo != "MAX"),
+        ],
+        [
+            "Status: A\nDescrição: Nunca qualificou — cliente nunca recebeu comissão e não há nenhuma prevista.",
+            "Status: B\nDescrição: Primeira qualificação — cliente ainda não recebeu comissão, mas há uma prevista.",
+            "Status: C\nDescrição: Qualificação recorrente — cliente já recebeu comissões anteriores e tem uma nova prevista.",
+            "Status: D\nDescrição: Topo atingido — cliente já recebeu comissões e atingiu a faixa máxima.",
+            "Status: E\nDescrição: Perdeu qualificação — cliente já recebeu comissões, mas não há nova prevista e não atingiu o nível máximo.",
+        ],
+        default="Status: -\nDescrição: Não classificado.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Ponto de entrada do step
 # ---------------------------------------------------------------------------
 
@@ -474,13 +590,16 @@ def run_enrich(session: Session, job_id: str) -> None:
         if column not in dataframe.columns:
             dataframe[column] = None
 
-    # Derivações — ordem importa: status_* antes dos insight_*
+    # Derivações — ordem importa:
+    # total_tpv antes de status_maq (depende de total_tpv)
+    # gap_columns antes de status_qualificacao (depende de faixa_alvo)
     _compute_total_tpv(dataframe)
     _compute_status_cartao(dataframe)
     _compute_status_maq(dataframe)
     _compute_status_bolcob(dataframe)
     _compute_insight_columns(dataframe)
     _compute_gap_columns(dataframe)
+    _compute_status_qualificacao(dataframe)
 
     # Filtra o dataframe para exatamente as colunas do modelo
     dataframe = dataframe[REQUIRED_COLUMNS]

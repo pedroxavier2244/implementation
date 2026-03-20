@@ -7,7 +7,7 @@ FINAL_TABLE_NAME = "final_visao_cliente"
 UPSERT_CONFLICT_COLUMNS = ("cd_cpf_cnpj_cliente",)
 UPSERT_CONFLICT_WHERE = "cd_cpf_cnpj_cliente IS NOT NULL"
 
-# Exatamente 107 colunas — espelho fiel da planilha MODELO (15.03.25).
+# Exatamente 108 colunas — espelho fiel da planilha MODELO (RELATORIO.FORMULASS).
 # Ordem e nomes normalizados via normalize_column_name().
 # Qualquer divergência aqui quebra o pipeline: não adicionar, não remover.
 REQUIRED_COLUMNS = [
@@ -120,6 +120,7 @@ REQUIRED_COLUMNS = [
     "pct_conta_global",         # %_CONTA_GLOBAL
     "maior_progresso_pct",      # MAIOR_PROGRESSO%
     "criterio_proximo",         # CRITERIO_PROXIMO
+    "status_qualificacao",      # STATUS_QUALIFICAÇÃO
 ]
 
 

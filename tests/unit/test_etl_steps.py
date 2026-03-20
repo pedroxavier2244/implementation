@@ -52,7 +52,7 @@ def test_clean_skips_when_done():
 
 
 def test_enrich_computes_model_columns():
-    """Verifica que run_enrich produz as colunas do modelo (107) e não as antigas."""
+    """Verifica que run_enrich produz as colunas do modelo (108) e não as antigas."""
     from shared.visao_cliente_schema import REQUIRED_COLUMNS
 
     base_df = pd.DataFrame(
@@ -120,6 +120,8 @@ def test_enrich_computes_model_columns():
     assert row["faixa_maximo"] == 4
     assert row["faixa_alvo"] == "MAX"
     assert row["threshold_cash_in"] == 0  # is_max=True → threshold=0
+    # ja_pago=120, previsao=0, faixa_alvo="MAX" → Status D
+    assert row["status_qualificacao"].startswith("Status: D")
 
     # Colunas antigas não devem existir
     removed = [
@@ -127,7 +129,7 @@ def test_enrich_computes_model_columns():
         "safra_boleto", "idade_safra_boleto", "safra_maquina", "idade_safra_maquina",
         "metrica_ativacao", "metrica_progresso", "metrica_urgencia",
         "metrica_financeiro", "metrica_intencao", "score_perfil",
-        "ja_recebeu_comissao", "comissao_prox_mes", "status_qualificacao",
+        "ja_recebeu_comissao", "comissao_prox_mes",
         "dias_desde_abertura", "m2_dias_faltantes",
         "faixa_max", "threshiold_cash_in", "threshold_saldo_medio",
     ]
@@ -136,15 +138,16 @@ def test_enrich_computes_model_columns():
 
 
 def test_required_columns_match_model():
-    """REQUIRED_COLUMNS deve ter exatamente 107 colunas do modelo."""
+    """REQUIRED_COLUMNS deve ter exatamente 108 colunas do modelo."""
     from shared.visao_cliente_schema import REQUIRED_COLUMNS
 
-    assert len(REQUIRED_COLUMNS) == 107
+    assert len(REQUIRED_COLUMNS) == 108
     # Novas colunas obrigatórias
     for col in ("total_tpv", "status_cartao", "status_maq", "status_bolcbob",
                 "insight_cartao", "insight_maq", "insight_bolcob",
                 "insight_pix_forte", "insight_conta_global",
-                "faixa_maximo", "threshold_cash_in", "thereshold_saldo_medio"):
+                "faixa_maximo", "threshold_cash_in", "thereshold_saldo_medio",
+                "status_qualificacao"):
         assert col in REQUIRED_COLUMNS, f"Coluna do modelo ausente: {col}"
     # Colunas antigas não devem estar presentes
     for col in ("faixa_max", "threshiold_cash_in", "threshold_saldo_medio",

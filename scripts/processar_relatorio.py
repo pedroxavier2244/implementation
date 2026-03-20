@@ -22,6 +22,7 @@ from worker.steps.enrich import (
     _compute_status_bolcob,
     _compute_status_cartao,
     _compute_status_maq,
+    _compute_status_qualificacao,
     _compute_total_tpv,
 )
 
@@ -56,6 +57,7 @@ OUTPUT_RENAME = {
     "pct_conta_global":         "%_CONTA_GLOBAL",
     "maior_progresso_pct":      "MAIOR_PROGRESSO%",
     "criterio_proximo":         "CRITERIO_PROXIMO",
+    "status_qualificacao":      "STATUS_QUALIFICAÇÃO",
 }
 
 ORIGINAL_COLS_UPPERCASE = [
@@ -138,6 +140,7 @@ def processar(input_path: str) -> str:
     _compute_status_bolcob(df)
     _compute_insight_columns(df)
     _compute_gap_columns(df)
+    _compute_status_qualificacao(df)
 
     df = _restore_original_columns(df)
 
