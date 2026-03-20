@@ -1,9 +1,17 @@
+import logging
+
 from sqlalchemy.orm import Session
 
 from shared.visao_cliente_schema import REQUIRED_COLUMNS
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 from worker.steps.extract import get_cached_dataframe, set_cached_dataframe
 
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helpers de coerção de tipos
+# ---------------------------------------------------------------------------
 
 def _coerce_numeric(series):
     import pandas as pd
@@ -16,7 +24,9 @@ def _coerce_numeric(series):
     has_dot = cleaned.str.contains(r"\.", na=False)
 
     mask_brl = has_comma & has_dot
-    cleaned.loc[mask_brl] = cleaned.loc[mask_brl].str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    cleaned.loc[mask_brl] = (
+        cleaned.loc[mask_brl].str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    )
 
     mask_only_comma = has_comma & ~has_dot
     cleaned.loc[mask_only_comma] = cleaned.loc[mask_only_comma].str.replace(",", ".", regex=False)
@@ -37,36 +47,323 @@ def _coerce_datetime(series):
     return from_strings.fillna(from_excel_serial)
 
 
-def _compute_levels(dataframe):
+def _fmt_brl(value) -> str:
+    """Formata um valor numérico como moeda BRL: R$ 1.234,56"""
+    import pandas as pd
+
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "R$ 0,00"
+    s = f"{float(value):,.2f}"
+    # troca separadores: 1,234.56 → 1.234,56
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"R$ {s}"
+
+
+# ---------------------------------------------------------------------------
+# Colunas derivadas: total_tpv
+# ---------------------------------------------------------------------------
+
+def _compute_total_tpv(dataframe) -> None:
+    """TOTAL_TPV = TPV_M0 + TPV_M1 + TPV_M2"""
+    m0 = _coerce_numeric(dataframe["tpv_m0"]).fillna(0)
+    m1 = _coerce_numeric(dataframe["tpv_m1"]).fillna(0)
+    m2 = _coerce_numeric(dataframe["tpv_m2"]).fillna(0)
+    dataframe["total_tpv"] = m0 + m1 + m2
+
+
+# ---------------------------------------------------------------------------
+# Colunas derivadas: status_cartao
+# ---------------------------------------------------------------------------
+
+def _compute_status_cartao(dataframe) -> None:
+    """
+    STATUS_CARTAO — 8 categorias baseadas em limite, ativação e spending.
+
+    Lógica (por prioridade):
+      VALIDAR                                  : dt_ativ presente mas sem limite de crédito
+      ATIVOU CREDITO - UTILIZANDO              : crédito ativo + spending > 0
+      ATIVOU CREDITO - NAO UTILIZANDO          : crédito ativo, spending = 0
+      NAO ATIVOU CREDITO (COM CDB)             : tem limite + CDB alocado, sem ativação
+      NAO ATIVOU CREDITO (SEM CDB)             : tem limite, sem CDB, sem ativação
+      DEBITO - UTILIZANDO                      : só débito (sem limite) + spending > 0
+      DEBITO - NAO UTILIZANDO                  : só débito (sem limite), spending = 0
+      NAO POSSUI CARTAO                        : nenhum dos anteriores
+    """
     import numpy as np
 
-    limite_cartao = _coerce_numeric(dataframe["limite_cartao"])
-    limite_conta = _coerce_numeric(dataframe["limite_conta"])
+    dt_entrega = _coerce_datetime(dataframe["dt_entrega_cartao"])
+    dt_ativ = _coerce_datetime(dataframe["dt_ativ_cartao_cred"])
+    lim_cartao = _coerce_numeric(dataframe["limite_cartao"]).fillna(0)
+    lim_aloc = _coerce_numeric(dataframe["limite_alocado_cartao_cdb"]).fillna(0)
+    spending = _coerce_numeric(dataframe["vl_spending_total_mtd"]).fillna(0)
 
-    dataframe["nivel_cartao"] = np.select(
+    has_entrega = ~dt_entrega.isna()
+    has_ativ = ~dt_ativ.isna()
+    has_credit = lim_cartao > 0
+    has_cdb = lim_aloc > 0
+    is_spending = spending > 0
+
+    dataframe["status_cartao"] = np.select(
         [
-            limite_cartao.isna() | (limite_cartao <= 0),
-            limite_cartao <= 1000,
-            limite_cartao <= 5000,
-            limite_cartao > 5000,
+            has_ativ & ~has_credit,
+            has_ativ & has_credit & is_spending,
+            has_ativ & has_credit & ~is_spending,
+            has_entrega & ~has_ativ & has_credit & has_cdb,
+            has_entrega & ~has_ativ & has_credit & ~has_cdb,
+            has_entrega & ~has_ativ & ~has_credit & is_spending,
+            has_entrega & ~has_ativ & ~has_credit & ~is_spending,
         ],
-        ["Sem Cartao", "Baixo", "Medio", "Alto"],
-        default=None,
+        [
+            "VALIDAR",
+            "ATIVOU CREDITO - UTILIZANDO",
+            "ATIVOU CREDITO - NAO UTILIZANDO",
+            "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (COM CDB)",
+            "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (SEM CDB)",
+            "DEBITO - UTILIZANDO",
+            "DEBITO - NAO UTILIZANDO",
+        ],
+        default="NAO POSSUI CARTAO",
     )
 
-    dataframe["nivel_conta"] = np.select(
+
+# ---------------------------------------------------------------------------
+# Colunas derivadas: status_maq
+# ---------------------------------------------------------------------------
+
+def _compute_status_maq(dataframe) -> None:
+    """
+    STATUS_MAQ — 5 categorias baseadas em instalação, ativação e atividade 30d.
+
+    Lógica (por prioridade):
+      ATIVA - TRANSACIONANDO  : máquina ativada + c6pay_ativa_30 = 1
+      ATIVA - INATIVA 30D     : máquina ativada + c6pay_ativa_30 = 0
+      INSTALADA - NAO ATIVADA : instalada mas sem ativação
+      ELEGIVEL - SEM VENDA    : elegível mas sem instalação
+      NAO ELEGIVEL            : demais casos
+    """
+    import numpy as np
+
+    fl_eleg = _coerce_numeric(dataframe["fl_elegivel_venda_c6pay"]).fillna(0)
+    dt_install = _coerce_datetime(dataframe["dt_install_maq"])
+    dt_ativ = _coerce_datetime(dataframe["dt_ativacao_pay"])
+    c6pay_30 = _coerce_numeric(dataframe["c6pay_ativa_30"]).fillna(0)
+
+    has_install = ~dt_install.isna()
+    has_ativ = ~dt_ativ.isna()
+    is_eleg = fl_eleg == 1
+    is_active_30 = c6pay_30 == 1
+
+    dataframe["status_maq"] = np.select(
         [
-            limite_conta.isna() | (limite_conta <= 0),
-            limite_conta <= 1000,
-            limite_conta <= 3000,
-            limite_conta > 3000,
+            has_ativ & is_active_30,
+            has_ativ & ~is_active_30,
+            has_install & ~has_ativ,
+            is_eleg & ~has_install,
         ],
-        ["Sem Conta", "Baixo", "Medio", "Alto"],
-        default=None,
+        [
+            "ATIVA - TRANSACIONANDO",
+            "ATIVA - INATIVA 30D",
+            "INSTALADA - NAO ATIVADA",
+            "ELEGIVEL - SEM VENDA",
+        ],
+        default="NAO ELEGIVEL",
     )
 
 
-def _compute_gap_columns(dataframe):
+# ---------------------------------------------------------------------------
+# Colunas derivadas: status_bolcbob
+# ---------------------------------------------------------------------------
+
+def _compute_status_bolcob(dataframe) -> None:
+    """
+    STATUS_BOLCBOB — categorias baseadas em cadastro e histórico de liquidação.
+
+    Lógica:
+      BOLETO CADASTRADO - NUNCA EMITIDO : fl_bolcob=1, sem liquidação prévia
+      BOLETO CADASTRADO - JA EMITIDO    : fl_bolcob=1, com liquidação prévia
+      SEM BOLETO CADASTRADO             : fl_bolcob=0 ou nulo
+    """
+    import numpy as np
+
+    fl_bolcob = _coerce_numeric(dataframe["fl_bolcob_cadastrado"]).fillna(0)
+    dt_prim = _coerce_datetime(dataframe["dt_prim_liq_bolcob"])
+
+    is_cadastrado = fl_bolcob == 1
+    has_prim = ~dt_prim.isna()
+
+    dataframe["status_bolcbob"] = np.select(
+        [
+            is_cadastrado & ~has_prim,
+            is_cadastrado & has_prim,
+        ],
+        [
+            "BOLETO CADASTRADO - NUNCA EMITIDO",
+            "BOLETO CADASTRADO - JA EMITIDO",
+        ],
+        default="SEM BOLETO CADASTRADO",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Colunas derivadas: insight_* (5 colunas de texto)
+# ---------------------------------------------------------------------------
+
+def _compute_insight_columns(dataframe) -> None:
+    """
+    Gera as 5 colunas de insight textual:
+      insight_cartao, insight_maq, insight_bolcob,
+      insight_pix_forte, insight_conta_global
+    """
+    import pandas as pd
+
+    # -- helpers --
+    def _fmt_date(series):
+        dt = _coerce_datetime(series)
+        return dt.dt.strftime("%d/%m/%Y").where(~dt.isna(), "")
+
+    def _fmt_series_brl(series):
+        return _coerce_numeric(series).map(_fmt_brl)
+
+    # ------------------------------------------------------------------ #
+    # insight_cartao
+    # ------------------------------------------------------------------ #
+    sc = dataframe["status_cartao"].astype(str)
+    fmt_entrega = _fmt_date(dataframe["dt_entrega_cartao"])
+    fmt_ativ_cred = _fmt_date(dataframe["dt_ativ_cartao_cred"])
+    fmt_lim = _fmt_series_brl(dataframe["limite_cartao"])
+    fmt_aloc = _fmt_series_brl(dataframe["limite_alocado_cartao_cdb"])
+    fmt_spending = _fmt_series_brl(dataframe["vl_spending_total_mtd"])
+
+    insight_cartao = pd.Series("Validar situação do cartão.", index=dataframe.index, dtype=object)
+    insight_cartao = insight_cartao.where(
+        sc != "NAO POSSUI CARTAO",
+        "Cliente sem cartão C6.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "DEBITO - NAO UTILIZANDO",
+        "Cartão de débito entregue em " + fmt_entrega + ", sem uso no mês.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "DEBITO - UTILIZANDO",
+        "Cartão de débito entregue em " + fmt_entrega + ", utilizando " + fmt_spending + " no mês.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "ATIVOU CREDITO - NAO UTILIZANDO",
+        "Crédito ativo (limite " + fmt_lim + ") desde " + fmt_ativ_cred + ", sem spending no mês.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "ATIVOU CREDITO - UTILIZANDO",
+        "Crédito ativo (limite " + fmt_lim + "), spending de " + fmt_spending + " no mês.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (COM CDB)",
+        "Possui limite de " + fmt_lim + " e CDB alocado de " + fmt_aloc + " mas não ativou o crédito.",
+    )
+    insight_cartao = insight_cartao.where(
+        sc != "NAO ATIVOU CREDITO - NAO UTILIZA CARTAO (SEM CDB)",
+        "Possui limite de " + fmt_lim + " mas não ativou o crédito. Sem CDB.",
+    )
+    dataframe["insight_cartao"] = insight_cartao
+
+    # ------------------------------------------------------------------ #
+    # insight_maq
+    # ------------------------------------------------------------------ #
+    sm = dataframe["status_maq"].astype(str)
+    fmt_install = _fmt_date(dataframe["dt_install_maq"])
+    fmt_ativ_pay = _fmt_date(dataframe["dt_ativacao_pay"])
+    fmt_ult_trans = _fmt_date(dataframe["dt_ult_trans_pay"])
+    fmt_m0 = _fmt_series_brl(dataframe["tpv_m0"])
+    fmt_m1 = _fmt_series_brl(dataframe["tpv_m1"])
+    fmt_m2 = _fmt_series_brl(dataframe["tpv_m2"])
+
+    insight_maq = pd.Series("Cliente não elegível para C6 Pay.", index=dataframe.index, dtype=object)
+    insight_maq = insight_maq.where(
+        sm != "ELEGIVEL - SEM VENDA",
+        "Elegível para C6 Pay.",
+    )
+    insight_maq = insight_maq.where(
+        sm != "INSTALADA - NAO ATIVADA",
+        "Maquininha instalada em " + fmt_install + ", aguardando ativação.",
+    )
+    insight_maq = insight_maq.where(
+        sm != "ATIVA - INATIVA 30D",
+        "Maquininha ativa desde " + fmt_ativ_pay
+        + ", sem transações nos últimos 30 dias. Última: " + fmt_ult_trans + ".",
+    )
+    insight_maq = insight_maq.where(
+        sm != "ATIVA - TRANSACIONANDO",
+        "Maquininha ativa (desde " + fmt_ativ_pay + "): TPV M0 "
+        + fmt_m0 + " | M1 " + fmt_m1 + " | M2 " + fmt_m2 + ".",
+    )
+    dataframe["insight_maq"] = insight_maq
+
+    # ------------------------------------------------------------------ #
+    # insight_bolcob
+    # ------------------------------------------------------------------ #
+    sb = dataframe["status_bolcbob"].astype(str)
+    fmt_potencial = _fmt_series_brl(dataframe["tpv_bolcob_potencial"])
+
+    insight_bolcob = pd.Series("Sem boleto cadastrado.", index=dataframe.index, dtype=object)
+    insight_bolcob = insight_bolcob.where(
+        sb != "SEM BOLETO CADASTRADO",
+        "Sem boleto cadastrado. Potencial estimado: " + fmt_potencial + ".",
+    )
+    insight_bolcob = insight_bolcob.where(
+        sb != "BOLETO CADASTRADO - NUNCA EMITIDO",
+        "Boleto cadastrado mas nunca emitido.",
+    )
+    insight_bolcob = insight_bolcob.where(
+        sb != "BOLETO CADASTRADO - JA EMITIDO",
+        "Boleto ativo.",
+    )
+    dataframe["insight_bolcob"] = insight_bolcob
+
+    # ------------------------------------------------------------------ #
+    # insight_pix_forte
+    # ------------------------------------------------------------------ #
+    chaves = dataframe["chaves_pix_forte"].astype(str).str.strip()
+    _null_pix = {"", "-", "'-", "nan", "none", "nat", "None", "NaT", "NULL", "null"}
+    has_pix = ~chaves.isin(_null_pix)
+    has_cnpj = chaves.str.upper().str.contains("CNPJ", na=False)
+
+    insight_pix = pd.Series(
+        "Sem chave PIX cadastrada. Incentivar cadastro da chave CNPJ.",
+        index=dataframe.index,
+        dtype=object,
+    )
+    insight_pix = insight_pix.where(
+        ~(has_pix & has_cnpj),
+        "Chave(s) PIX cadastrada(s): " + chaves + ". Chave forte ativa.",
+    )
+    insight_pix = insight_pix.where(
+        ~(has_pix & ~has_cnpj),
+        "Chave(s) PIX cadastrada(s): " + chaves + ". Sem chave CNPJ \u2014 incentivar cadastro.",
+    )
+    dataframe["insight_pix_forte"] = insight_pix
+
+    # ------------------------------------------------------------------ #
+    # insight_conta_global
+    # ------------------------------------------------------------------ #
+    dt_global = _coerce_datetime(dataframe["dt_conta_criada_global"])
+    dataframe["insight_conta_global"] = (
+        pd.Series("Sem Conta Global.", index=dataframe.index, dtype=object)
+        .where(dt_global.isna(), "Possui Conta Global.")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Colunas derivadas: gap / threshold / faixa / pct (modelo cols 90–107)
+# ---------------------------------------------------------------------------
+
+def _compute_gap_columns(dataframe) -> None:
+    """
+    Calcula as colunas de faixa, threshold, gap e percentual de progresso.
+
+    Nomes seguem exatamente o modelo:
+      faixa_maximo (era faixa_max)
+      threshold_cash_in (era threshiold_cash_in)
+      thereshold_saldo_medio (nome do modelo, com typo)
+    """
     import numpy as np
     import pandas as pd
 
@@ -80,11 +377,11 @@ def _compute_gap_columns(dataframe):
         [faixa_cash, faixa_domicilio, faixa_saldo, faixa_spending, faixa_global],
         axis=1,
     )
-    faixa_max = faixa_frame.max(axis=1).fillna(0).astype(int)
-    dataframe["faixa_max"] = faixa_max
+    faixa_maximo = faixa_frame.max(axis=1).fillna(0).astype(int)
+    dataframe["faixa_maximo"] = faixa_maximo
 
-    faixa_alvo_num = faixa_max + 1
-    is_max = faixa_max >= 4
+    faixa_alvo_num = faixa_maximo + 1
+    is_max = faixa_maximo >= 4
     dataframe["faixa_alvo"] = np.where(is_max, "MAX", faixa_alvo_num.astype(str))
 
     target_cash_in = faixa_alvo_num.map({1: 6000, 2: 15000, 3: 30000, 4: 50000}).fillna(0)
@@ -94,9 +391,9 @@ def _compute_gap_columns(dataframe):
     target_domicilio = faixa_alvo_num.map({1: 5000, 2: 12000, 3: 18000, 4: 25000}).fillna(0)
 
     for col, values in (
-        ("threshiold_cash_in", target_cash_in),
+        ("threshold_cash_in", target_cash_in),
         ("threshold_spending", target_spending),
-        ("threshold_saldo_medio", target_saldo),
+        ("thereshold_saldo_medio", target_saldo),
         ("threshold_conta_global", target_global),
         ("threshold_domicilio", target_domicilio),
     ):
@@ -108,35 +405,27 @@ def _compute_gap_columns(dataframe):
     current_global = _coerce_numeric(dataframe["vl_cash_in_conta_global_mtd"]).fillna(0)
 
     dataframe["gap_cash_in"] = np.where(
-        is_max | (faixa_cash >= faixa_alvo_num),
-        0,
+        is_max | (faixa_cash >= faixa_alvo_num), 0,
         np.maximum(target_cash_in - current_cash, 0),
     )
     dataframe["gap_spending"] = np.where(
-        is_max | (faixa_spending >= faixa_alvo_num),
-        0,
+        is_max | (faixa_spending >= faixa_alvo_num), 0,
         np.maximum(target_spending - current_spending, 0),
     )
     dataframe["gap_saldo_medio"] = np.where(
-        is_max | (faixa_saldo >= faixa_alvo_num),
-        0,
+        is_max | (faixa_saldo >= faixa_alvo_num), 0,
         np.maximum(target_saldo - current_saldo, 0),
     )
     dataframe["gap_conta_global"] = np.where(
-        is_max | (faixa_global >= faixa_alvo_num),
-        0,
+        is_max | (faixa_global >= faixa_alvo_num), 0,
         np.maximum(target_global - current_global, 0),
     )
     dataframe["gap_domicilio"] = np.where(
-        is_max | (faixa_domicilio >= faixa_alvo_num),
-        0,
+        is_max | (faixa_domicilio >= faixa_alvo_num), 0,
         None,
     )
 
     def _progress(gap, target):
-        # Excel formula: =(IF(OR(GAP=0,THRESHOLD=0),0,GAP/THRESHOLD)-1)*-1
-        # When gap=0 or threshold=0 the inner IF returns 0, then (0-1)*-1 = 1 (100%)
-        # When gap>0: (gap/threshold - 1) * -1 = 1 - gap/threshold
         return np.where((gap == 0) | (target == 0), 1, 1 - (gap / target))
 
     pct_cash = _progress(dataframe["gap_cash_in"], target_cash_in)
@@ -159,9 +448,6 @@ def _compute_gap_columns(dataframe):
     )
     dataframe["maior_progresso_pct"] = np.where(is_max, 1, pct_frame.max(axis=1))
 
-    # Vectorized: mesmo criterio do Excel — criterio com maior progresso (primeiro em caso de empate)
-    # Excel: =IF(MAX,"MAX",IF(CS=CO,"CASH_IN",IF(CS=CP,"SPENDING",...)))
-    # Prioridade de empate: CASH_IN > SPENDING > SALDO_MEDIO > CONTA_GLOBAL
     pct_row_max = pct_frame.max(axis=1)
     criterio = np.full(len(pct_frame), "CASH_IN", dtype=object)
     for name in reversed(["CASH_IN", "SPENDING", "SALDO_MEDIO", "CONTA_GLOBAL"]):
@@ -170,229 +456,9 @@ def _compute_gap_columns(dataframe):
     dataframe["criterio_proximo"] = criterio
 
 
-def _compute_safra_columns(dataframe):
-    """Deriva as 6 colunas de safra/cancelamento/elegibilidade.
-
-    Fonte das fórmulas: RELATORIO_LIMPO_2025_COM_FORMULAS.xlsx (colunas DB–DG).
-
-    Observação importante:
-    - safra_maquina / idade_safra_maquina usam DT_ATIVACAO_PAY (col AK),
-      NÃO DT_INSTALL_MAQ — conforme fórmula Excel original.
-    - idade_safra_* e cancelamento_maq retornam strings ("SEM BOLETO" etc.)
-      quando o campo de data de referência está ausente, pois as colunas são
-      do tipo Text no banco.
-    """
-    import numpy as np
-    import pandas as pd
-
-    dt_install = _coerce_datetime(dataframe["dt_install_maq"])
-    dt_cancel  = _coerce_datetime(dataframe["dt_cancelamento_maq"])
-    dt_ativacao = _coerce_datetime(dataframe["dt_ativacao_pay"])
-    dt_bolcob  = _coerce_datetime(dataframe["dt_prim_liq_bolcob"])
-    data_base  = _coerce_datetime(dataframe["data_base"])
-
-    # -- cancelamento_maq --
-    # Excel: =IF(DT_INSTALL_MAQ="","Sem máquina instalada",
-    #            IF(DT_CANCELAMENTO_MAQ="","Máquina ativa desde "&TEXT(DT_INSTALL_MAQ,"dd/mm/aaaa"),
-    #            "Instalada em "&TEXT(DT_INSTALL_MAQ,"dd/mm/aaaa")&
-    #            " | Cancelada em "&TEXT(DT_CANCELAMENTO_MAQ,"dd/mm/aaaa")))
-    install_str = dt_install.dt.strftime("%d/%m/%Y").where(~dt_install.isna(), "")
-    cancel_str  = dt_cancel.dt.strftime("%d/%m/%Y").where(~dt_cancel.isna(), "")
-    dataframe["cancelamento_maq"] = np.where(
-        dt_install.isna(),
-        "Sem máquina instalada",
-        np.where(
-            dt_cancel.isna(),
-            "Máquina ativa desde " + install_str,
-            "Instalada em " + install_str + " | Cancelada em " + cancel_str,
-        ),
-    )
-
-    # -- elegivel_c6 --
-    # Excel: =IF(AND(FL_ELEGIVEL_VENDA_C6PAY=1, DT_INSTALL_MAQ="", DT_CANCELAMENTO_MAQ=""),
-    #            "Elegível","Não Elegível")
-    fl_elegivel = _coerce_numeric(dataframe["fl_elegivel_venda_c6pay"]).fillna(0)
-    dataframe["elegivel_c6"] = np.where(
-        (fl_elegivel == 1) & dt_install.isna() & dt_cancel.isna(),
-        "Elegível",
-        "Não Elegível",
-    )
-
-    # -- safra_boleto --
-    # Excel: =IF(DT_PRIM_LIQ_BOLCOB="","SEM BOLETO",
-    #            YEAR(DT_PRIM_LIQ_BOLCOB)&"-"&TEXT(MONTH(DT_PRIM_LIQ_BOLCOB),"00"))
-    safra_boleto_str = dt_bolcob.dt.strftime("%Y-%m")
-    dataframe["safra_boleto"] = np.where(dt_bolcob.isna(), "SEM BOLETO", safra_boleto_str)
-
-    # -- idade_safra_boleto --
-    # Excel: =IF(DT_PRIM_LIQ_BOLCOB="","SEM BOLETO", DATA_BASE - DT_PRIM_LIQ_BOLCOB) [dias]
-    idade_boleto = (data_base.dt.floor("D") - dt_bolcob.dt.floor("D")).dt.days
-    dataframe["idade_safra_boleto"] = np.where(
-        dt_bolcob.isna(),
-        "SEM BOLETO",
-        idade_boleto.astype("Int64").astype(str).where(~dt_bolcob.isna(), "SEM BOLETO"),
-    )
-
-    # -- safra_maquina --
-    # Excel: =IF(DT_ATIVACAO_PAY="","SEM MÁQUINA",
-    #            YEAR(DT_ATIVACAO_PAY)&"-"&TEXT(MONTH(DT_ATIVACAO_PAY),"00"))
-    # ATENÇÃO: usa DT_ATIVACAO_PAY (ativação), não DT_INSTALL_MAQ (instalação)
-    safra_maq_str = dt_ativacao.dt.strftime("%Y-%m")
-    dataframe["safra_maquina"] = np.where(dt_ativacao.isna(), "SEM MÁQUINA", safra_maq_str)
-
-    # -- idade_safra_maquina --
-    # Excel: =IF(DT_ATIVACAO_PAY="","SEM MÁQUINA", DATA_BASE - DT_ATIVACAO_PAY) [dias]
-    idade_maq = (data_base.dt.floor("D") - dt_ativacao.dt.floor("D")).dt.days
-    dataframe["idade_safra_maquina"] = np.where(
-        dt_ativacao.isna(),
-        "SEM MÁQUINA",
-        idade_maq.astype("Int64").astype(str).where(~dt_ativacao.isna(), "SEM MÁQUINA"),
-    )
-
-
-def _compute_metrica_columns(dataframe):
-    """Deriva as 6 colunas de métricas e o score_perfil composto.
-
-    Fonte das fórmulas: screenshot fornecido pelo usuário (colunas DH–DM do modelo limpo).
-
-    Fórmulas Excel originais:
-      metrica_ativacao  = SE(OU(CA2="";CA2=0);0,15;SE(CA2<=210;0,12;SE(CA2<=345;0,08;SE(CA2<=600;0,03;0))))
-      metrica_progresso = CS2*0,35
-      metrica_urgencia  = SE(BQ2="M0";0,35;SE(BQ2="M1";0,2;SE(BQ2="M2";SE(CS2>=0,6;SE(CY2<=15;0,3;0,25);0,15);0)))
-      metrica_financeiro= ((SE(OU(Y2="";Y2=0);0;SE(Y2<=1000;0,33;SE(Y2<=5000;0,66;1)))+
-                            SE(OU(R2="";R2=0);0;SE(R2<=1000;0,33;SE(R2<=3000;0,66;1))))/2)*0,05
-      metrica_intencao  = SE(W2="CNPJ";0;0,1)
-      score_perfil      = MÍNIMO(DH2+DI2+DJ2+DK2+DL2;1)
-
-    Mapeamento de colunas Excel → banco:
-      CA = ja_pago_comiss (col 79)
-      CS = maior_progresso_pct (col 97)
-      BQ = mes_ref_comiss (col 69)
-      CY = m2_dias_faltantes (col 103)
-      Y  = limite_cartao (col 25)
-      R  = limite_conta (col 18)
-      W  = chaves_pix_forte (col 23)
-    """
-    import numpy as np
-
-    ja_pago          = _coerce_numeric(dataframe["ja_pago_comiss"]).fillna(0)
-    maior_progresso  = _coerce_numeric(dataframe["maior_progresso_pct"]).fillna(0)
-    mes_ref          = dataframe["mes_ref_comiss"].astype(str).str.strip().str.upper()
-    dias_faltantes   = _coerce_numeric(dataframe["m2_dias_faltantes"]).fillna(999)
-    limite_cartao    = _coerce_numeric(dataframe["limite_cartao"]).fillna(0)
-    limite_conta     = _coerce_numeric(dataframe["limite_conta"]).fillna(0)
-    chaves_pix       = dataframe["chaves_pix_forte"].astype(str).str.strip().str.upper()
-
-    # -- metrica_ativacao --
-    # SE(OU(CA=0)→0,15; CA<=210→0,12; CA<=345→0,08; CA<=600→0,03; senão 0)
-    dataframe["metrica_ativacao"] = np.select(
-        [
-            ja_pago == 0,
-            ja_pago <= 210,
-            ja_pago <= 345,
-            ja_pago <= 600,
-        ],
-        [0.15, 0.12, 0.08, 0.03],
-        default=0.0,
-    )
-
-    # -- metrica_progresso --
-    # maior_progresso_pct * 0,35
-    dataframe["metrica_progresso"] = maior_progresso * 0.35
-
-    # -- metrica_urgencia --
-    # M0→0,35 | M1→0,2 | M2 com progresso≥0,6: dias≤15→0,3 senão 0,25; M2 com progresso<0,6→0,15 | demais→0
-    urgencia_m2 = np.where(
-        maior_progresso >= 0.6,
-        np.where(dias_faltantes <= 15, 0.3, 0.25),
-        0.15,
-    )
-    dataframe["metrica_urgencia"] = np.select(
-        [
-            mes_ref == "M0",
-            mes_ref == "M1",
-            mes_ref == "M2",
-        ],
-        [0.35, 0.2, urgencia_m2],
-        default=0.0,
-    )
-
-    # -- metrica_financeiro --
-    # ((score_cartao + score_conta) / 2) * 0,05
-    # F10: limite <= 0 (inclui negativos) → score 0, igual a sem limite
-    # score_cartao: ≤0→0; ≤1000→0,33; ≤5000→0,66; >5000→1
-    # score_conta:  ≤0→0; ≤1000→0,33; ≤3000→0,66; >3000→1
-    score_cartao = np.select(
-        [limite_cartao <= 0, limite_cartao <= 1000, limite_cartao <= 5000],
-        [0.0, 0.33, 0.66],
-        default=1.0,
-    )
-    score_conta = np.select(
-        [limite_conta <= 0, limite_conta <= 1000, limite_conta <= 3000],
-        [0.0, 0.33, 0.66],
-        default=1.0,
-    )
-    dataframe["metrica_financeiro"] = ((score_cartao + score_conta) / 2) * 0.05
-
-    # -- metrica_intencao --
-    # SE(chaves_pix_forte="CNPJ";0;0,1)
-    dataframe["metrica_intencao"] = np.where(chaves_pix == "CNPJ", 0.0, 0.1)
-
-    # -- score_perfil --
-    # MÍNIMO(soma das 5 métricas; 1)
-    soma = (
-        dataframe["metrica_ativacao"]
-        + dataframe["metrica_progresso"]
-        + dataframe["metrica_urgencia"]
-        + dataframe["metrica_financeiro"]
-        + dataframe["metrica_intencao"]
-    )
-    dataframe["score_perfil"] = np.minimum(soma, 1.0)
-
-
-def _compute_status_columns(dataframe):
-    import numpy as np
-
-    ja_pago = _coerce_numeric(dataframe["ja_pago_comiss"]).fillna(0)
-    previsao = _coerce_numeric(dataframe["previsao_comiss"]).fillna(0)
-
-    # Padronizado: "SIM" / "NAO" sem acento e em maiúsculas — consistente em todos os campos
-    ja_recebeu = np.where(ja_pago > 0, "SIM", "NAO")
-    prox_mes = np.where(previsao > 0, "SIM", "NAO")
-    dataframe["ja_recebeu_comissao"] = ja_recebeu
-    dataframe["comissao_prox_mes"] = prox_mes
-
-    faixa_alvo = dataframe["faixa_alvo"].astype(str).str.upper()
-    is_max = faixa_alvo == "MAX"
-
-    status = np.where(
-        (ja_recebeu == "NAO") & (prox_mes == "NAO"),
-        "A - Nunca qualificou",
-        np.where(
-            (ja_recebeu == "NAO") & (prox_mes == "SIM"),
-            "B - Primeira qualificação",
-            np.where(
-                (ja_recebeu == "SIM") & (prox_mes == "SIM"),
-                "C - Qualificação recorrente",
-                np.where(is_max, "D - Topo atingido", "E - Perdeu qualificação"),
-            ),
-        ),
-    )
-    dataframe["status_qualificacao"] = status
-
-
-def _compute_day_metrics(dataframe):
-    import numpy as np
-
-    data_base = _coerce_datetime(dataframe["data_base"])
-    dt_conta = _coerce_datetime(dataframe["dt_conta_criada"])
-    days_since = (data_base.dt.floor("D") - dt_conta.dt.floor("D")).dt.days
-
-    # Use pandas .where() to preserve numeric dtype and emit NULL (not a string) for missing dates
-    import pandas as pd
-    dataframe["dias_desde_abertura"] = days_since.where(~dt_conta.isna(), other=None)
-    dataframe["m2_dias_faltantes"] = (days_since - 60).where(~dt_conta.isna(), other=None)
-
+# ---------------------------------------------------------------------------
+# Ponto de entrada do step
+# ---------------------------------------------------------------------------
 
 def run_enrich(session: Session, job_id: str) -> None:
     if is_step_done(session, job_id, "enrich"):
@@ -403,18 +469,20 @@ def run_enrich(session: Session, job_id: str) -> None:
     if dataframe is None:
         raise RuntimeError("No dataframe in cache")
 
+    # Garante que colunas source ausentes existam como None
     for column in REQUIRED_COLUMNS:
         if column not in dataframe.columns:
             dataframe[column] = None
 
-    _compute_levels(dataframe)
+    # Derivações — ordem importa: status_* antes dos insight_*
+    _compute_total_tpv(dataframe)
+    _compute_status_cartao(dataframe)
+    _compute_status_maq(dataframe)
+    _compute_status_bolcob(dataframe)
+    _compute_insight_columns(dataframe)
     _compute_gap_columns(dataframe)
-    _compute_status_columns(dataframe)
-    _compute_day_metrics(dataframe)
-    _compute_safra_columns(dataframe)
-    _compute_metrica_columns(dataframe)
 
-    # Keep output shape aligned with the target spreadsheet model.
+    # Filtra o dataframe para exatamente as colunas do modelo
     dataframe = dataframe[REQUIRED_COLUMNS]
     set_cached_dataframe(job_id, dataframe)
 

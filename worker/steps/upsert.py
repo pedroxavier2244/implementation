@@ -219,31 +219,4 @@ def run_upsert(session: Session, job_id: str) -> None:
 
     session.execute(text(upsert_sql), {"job_id": job_id})
 
-    if "nivel_cartao" in all_columns and "nivel_conta" in all_columns:
-        limite_cartao_num = _numeric_sql_from_text("f.limite_cartao")
-        limite_conta_num = _numeric_sql_from_text("f.limite_conta")
-        level_backfill_sql = f"""
-            UPDATE {FINAL_TABLE} AS f
-            SET
-                nivel_cartao = CASE
-                    WHEN {limite_cartao_num} IS NULL OR {limite_cartao_num} <= 0 THEN 'Sem Cartao'
-                    WHEN {limite_cartao_num} <= 1000 THEN 'Baixo'
-                    WHEN {limite_cartao_num} <= 5000 THEN 'Medio'
-                    ELSE 'Alto'
-                END,
-                nivel_conta = CASE
-                    WHEN {limite_conta_num} IS NULL OR {limite_conta_num} <= 0 THEN 'Sem Conta'
-                    WHEN {limite_conta_num} <= 1000 THEN 'Baixo'
-                    WHEN {limite_conta_num} <= 3000 THEN 'Medio'
-                    ELSE 'Alto'
-                END
-            WHERE EXISTS (
-                SELECT 1
-                FROM {STAGING_TABLE} AS s
-                WHERE s.etl_job_id = :job_id
-                  AND s.cd_cpf_cnpj_cliente = f.cd_cpf_cnpj_cliente
-            )
-        """
-        session.execute(text(level_backfill_sql), {"job_id": job_id})
-
     mark_step_done(session, job_id, "upsert")

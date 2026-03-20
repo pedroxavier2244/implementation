@@ -1,6 +1,4 @@
 import uuid
-import re
-import unicodedata
 
 from sqlalchemy.orm import Session
 
@@ -10,33 +8,11 @@ from shared.visao_cliente_schema import REQUIRED_COLUMNS, normalize_column_name
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 from worker.steps.extract import get_cached_dataframe
 
-_ALLOWED_NIVEL_CARTAO = {"sem_cartao", "baixo", "medio", "alto"}
-_ALLOWED_NIVEL_CONTA = {"sem_conta", "baixo", "medio", "alto"}
-
-
 def _missing_required_columns(columns: list[str]) -> list[str]:
     if not REQUIRED_COLUMNS:
         return []
     normalized = {normalize_column_name(c) for c in columns}
     return [col for col in REQUIRED_COLUMNS if col.lower() not in normalized]
-
-
-def _normalize_level_value(value) -> str | None:
-    text = str(value or "").strip()
-    if not text or text.lower() in {"nan", "none", "nat"}:
-        return None
-
-    normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-    normalized = re.sub(r"\s+", " ", normalized).strip().lower()
-
-    aliases = {
-        "sem cartao": "sem_cartao",
-        "sem conta": "sem_conta",
-        "medio": "medio",
-        "baixo": "baixo",
-        "alto": "alto",
-    }
-    return aliases.get(normalized, normalized.replace(" ", "_"))
 
 
 def run_validate(session: Session, job_id: str, etl_file) -> None:
@@ -67,32 +43,6 @@ def run_validate(session: Session, job_id: str, etl_file) -> None:
                 reason="all_null_row",
             )
         )
-
-    # Validacao vetorizada de nivel_cartao / nivel_conta (exclui linhas all-null)
-    non_null = dataframe[~all_null_mask].copy()
-    if not non_null.empty:
-        norm_cartao = non_null["nivel_cartao"].map(_normalize_level_value)
-        norm_conta = non_null["nivel_conta"].map(_normalize_level_value)
-
-        invalid_cartao = norm_cartao.notna() & ~norm_cartao.isin(_ALLOWED_NIVEL_CARTAO)
-        invalid_conta = norm_conta.notna() & ~norm_conta.isin(_ALLOWED_NIVEL_CONTA)
-        invalid_mask = invalid_cartao | invalid_conta
-
-        for idx in non_null.index[invalid_mask]:
-            fields: list[str] = []
-            if invalid_cartao.loc[idx]:
-                fields.append(f"nivel_cartao={non_null.loc[idx, 'nivel_cartao']!r}")
-            if invalid_conta.loc[idx]:
-                fields.append(f"nivel_conta={non_null.loc[idx, 'nivel_conta']!r}")
-            bad_rows.append(
-                EtlBadRow(
-                    id=str(uuid.uuid4()),
-                    job_id=job_id,
-                    row_number=int(idx),
-                    raw_data=non_null.loc[idx].to_dict(),
-                    reason=f"invalid_level_value: {'; '.join(fields)}",
-                )
-            )
 
     total = len(dataframe)
     bad_count = len(bad_rows)

@@ -7,7 +7,11 @@ FINAL_TABLE_NAME = "final_visao_cliente"
 UPSERT_CONFLICT_COLUMNS = ("cd_cpf_cnpj_cliente",)
 UPSERT_CONFLICT_WHERE = "cd_cpf_cnpj_cliente IS NOT NULL"
 
+# Exatamente 107 colunas — espelho fiel da planilha MODELO (15.03.25).
+# Ordem e nomes normalizados via normalize_column_name().
+# Qualquer divergência aqui quebra o pipeline: não adicionar, não remover.
 REQUIRED_COLUMNS = [
+    # --- Colunas source (1–80): passam direto do arquivo bruto ---
     "data_base",
     "cd_cpf_cnpj_cliente",
     "nome_cliente",
@@ -88,43 +92,34 @@ REQUIRED_COLUMNS = [
     "multiplicador",
     "ja_pago_comiss",
     "previsao_comiss",
-    "faixa_max",
-    "faixa_alvo",
-    "threshiold_cash_in",
-    "threshold_spending",
-    "threshold_saldo_medio",
-    "threshold_conta_global",
-    "threshold_domicilio",
-    "gap_cash_in",
-    "gap_spending",
-    "gap_saldo_medio",
-    "gap_conta_global",
-    "gap_domicilio",
-    "pct_cash_in",
-    "pct_spending",
-    "pct_saldo_medio",
-    "pct_conta_global",
-    "maior_progresso_pct",
-    "criterio_proximo",
-    "ja_recebeu_comissao",
-    "comissao_prox_mes",
-    "status_qualificacao",
-    "dias_desde_abertura",
-    "m2_dias_faltantes",
-    "nivel_cartao",
-    "nivel_conta",
-    "cancelamento_maq",
-    "elegivel_c6",
-    "safra_boleto",
-    "idade_safra_boleto",
-    "safra_maquina",
-    "idade_safra_maquina",
-    "metrica_ativacao",
-    "metrica_progresso",
-    "metrica_urgencia",
-    "metrica_financeiro",
-    "metrica_intencao",
-    "score_perfil",
+    # --- Colunas derivadas (81–107): calculadas pelo ETL ---
+    "total_tpv",                # TOTAL_TPV
+    "status_cartao",            # STATUS_CARTAO
+    "status_maq",               # STATUS_MAQ
+    "status_bolcbob",           # STATUS_BOLCBOB  (nome exato do modelo)
+    "insight_cartao",           # INSIGHT_CARTAO
+    "insight_maq",              # INSIGHT_MAQ
+    "insight_bolcob",           # INSIGHT_BOLCOB
+    "insight_pix_forte",        # INSIGHT_PIX FORTE → normalizado
+    "insight_conta_global",     # INSIGHT_CONTA_GLOBAL
+    "faixa_maximo",             # FAIXA_MAXIMO
+    "faixa_alvo",               # FAIXA_ALVO
+    "threshold_cash_in",        # THRESHOLD_CASH_IN
+    "threshold_spending",       # THRESHOLD_SPENDING
+    "thereshold_saldo_medio",   # THERESHOLD_SALDO_MEDIO (nome exato do modelo)
+    "threshold_conta_global",   # THRESHOLD_CONTA_GLOBAL
+    "threshold_domicilio",      # THRESHOLD_DOMICILIO
+    "gap_cash_in",              # GAP_CASH_IN
+    "gap_spending",             # GAP_SPENDING
+    "gap_saldo_medio",          # GAP_SALDO_MEDIO
+    "gap_conta_global",         # GAP_CONTA_GLOBAL
+    "gap_domicilio",            # GAP_DOMICILIO
+    "pct_cash_in",              # %_CASH_IN
+    "pct_spending",             # %_SPENDING
+    "pct_saldo_medio",          # %_SALDO_MEDIO
+    "pct_conta_global",         # %_CONTA_GLOBAL
+    "maior_progresso_pct",      # MAIOR_PROGRESSO%
+    "criterio_proximo",         # CRITERIO_PROXIMO
 ]
 
 

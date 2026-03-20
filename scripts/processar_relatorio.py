@@ -8,51 +8,54 @@ Saida:
     <mesmo_diretorio>/<nome_original> (processado).xlsx
 """
 import sys
-import os
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
 
 # Adiciona raiz do projeto ao path para importar worker/shared
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from shared.visao_cliente_schema import normalize_column_name
 from worker.steps.enrich import (
-    _compute_levels,
     _compute_gap_columns,
-    _compute_status_columns,
-    _compute_day_metrics,
+    _compute_insight_columns,
+    _compute_status_bolcob,
+    _compute_status_cartao,
+    _compute_status_maq,
+    _compute_total_tpv,
 )
 
 SHEET_NAME = "Visão Cliente"
 
+# Mapeia nome interno (snake_case) → nome Excel do modelo
 OUTPUT_RENAME = {
-    "faixa_max":              "FAIXA_MAX",
-    "faixa_alvo":             "FAIXA_ALVO",
-    "threshiold_cash_in":     "THRESHIOLD_CASH_IN",
-    "threshold_spending":     "THRESHOLD_SPENDING",
-    "threshold_saldo_medio":  "THRESHOLD_SALDO_MEDIO",
-    "threshold_conta_global": "THRESHOLD_CONTA_GLOBAL",
-    "threshold_domicilio":    "THRESHOLD_DOMICILIO",
-    "gap_cash_in":            "GAP_CASH_IN",
-    "gap_spending":           "GAP_SPENDING",
-    "gap_saldo_medio":        "GAP_SALDO_MEDIO",
-    "gap_conta_global":       "GAP_CONTA_GLOBAL",
-    "gap_domicilio":          "GAP_DOMICILIO",
-    "pct_cash_in":            "%_CASH_IN",
-    "pct_spending":           "%_SPENDING",
-    "pct_saldo_medio":        "%_SALDO_MEDIO",
-    "pct_conta_global":       "%_CONTA_GLOBAL",
-    "maior_progresso_pct":    "MAIOR_PROGRESSO%",
-    "criterio_proximo":       "CRITERIO_PROXIMO",
-    "ja_recebeu_comissao":    "JA_RECEBEU_COMISSAO",
-    "comissao_prox_mes":      "COMISSAO_PROX_MES",
-    "status_qualificacao":    "STATUS_QUALIFICAÇÃO",
-    "dias_desde_abertura":    "DIAS_DESDE_ABERTURA",
-    "m2_dias_faltantes":      "M2_DIAS_FALTANTES",
-    "nivel_cartao":           "NIVEL_CARTAO",
-    "nivel_conta":            "NIVEL_CONTA",
+    "total_tpv":                "TOTAL_TPV",
+    "status_cartao":            "STATUS_CARTAO",
+    "status_maq":               "STATUS_MAQ",
+    "status_bolcbob":           "STATUS_BOLCBOB",
+    "insight_cartao":           "INSIGHT_CARTAO",
+    "insight_maq":              "INSIGHT_MAQ",
+    "insight_bolcob":           "INSIGHT_BOLCOB",
+    "insight_pix_forte":        "INSIGHT_PIX FORTE",
+    "insight_conta_global":     "INSIGHT_CONTA_GLOBAL",
+    "faixa_maximo":             "FAIXA_MAXIMO",
+    "faixa_alvo":               "FAIXA_ALVO",
+    "threshold_cash_in":        "THRESHOLD_CASH_IN",
+    "threshold_spending":       "THRESHOLD_SPENDING",
+    "thereshold_saldo_medio":   "THERESHOLD_SALDO_MEDIO",
+    "threshold_conta_global":   "THRESHOLD_CONTA_GLOBAL",
+    "threshold_domicilio":      "THRESHOLD_DOMICILIO",
+    "gap_cash_in":              "GAP_CASH_IN",
+    "gap_spending":             "GAP_SPENDING",
+    "gap_saldo_medio":          "GAP_SALDO_MEDIO",
+    "gap_conta_global":         "GAP_CONTA_GLOBAL",
+    "gap_domicilio":            "GAP_DOMICILIO",
+    "pct_cash_in":              "%_CASH_IN",
+    "pct_spending":             "%_SPENDING",
+    "pct_saldo_medio":          "%_SALDO_MEDIO",
+    "pct_conta_global":         "%_CONTA_GLOBAL",
+    "maior_progresso_pct":      "MAIOR_PROGRESSO%",
+    "criterio_proximo":         "CRITERIO_PROXIMO",
 }
 
 ORIGINAL_COLS_UPPERCASE = [
@@ -118,19 +121,23 @@ def processar(input_path: str) -> str:
         "faixa_spending", "faixa_cash_in_global",
         "vl_cash_in_mtd", "vl_spending_total_mtd",
         "vl_saldo_medio_mensalizado", "vl_cash_in_conta_global_mtd",
-        "ja_pago_comiss", "previsao_comiss",
-        "limite_cartao", "limite_conta",
-        "data_base", "dt_conta_criada",
+        "tpv_m0", "tpv_m1", "tpv_m2",
+        "fl_elegivel_venda_c6pay", "dt_install_maq", "dt_ativacao_pay", "c6pay_ativa_30",
+        "fl_bolcob_cadastrado", "dt_prim_liq_bolcob", "tpv_bolcob_potencial",
+        "dt_entrega_cartao", "dt_ativ_cartao_cred", "limite_cartao",
+        "limite_alocado_cartao_cdb", "chaves_pix_forte", "dt_conta_criada_global",
     ]
     missing = [c for c in required_input if c not in df.columns]
     if missing:
         raise ValueError(f"Colunas obrigatorias ausentes: {missing}")
 
     print("  Calculando colunas derivadas...")
-    _compute_levels(df)
+    _compute_total_tpv(df)
+    _compute_status_cartao(df)
+    _compute_status_maq(df)
+    _compute_status_bolcob(df)
+    _compute_insight_columns(df)
     _compute_gap_columns(df)
-    _compute_status_columns(df)
-    _compute_day_metrics(df)
 
     df = _restore_original_columns(df)
 

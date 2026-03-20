@@ -11,9 +11,14 @@ def test_conflict_key_is_cliente_only():
     assert UPSERT_CONFLICT_WHERE == "cd_cpf_cnpj_cliente IS NOT NULL"
 
 
-def test_required_columns_include_nivel_fields():
-    assert "nivel_cartao" in REQUIRED_COLUMNS
-    assert "nivel_conta" in REQUIRED_COLUMNS
+def test_required_columns_include_model_fields():
+    # nivel_cartao / nivel_conta foram removidos do modelo oficial
+    assert "nivel_cartao" not in REQUIRED_COLUMNS
+    assert "nivel_conta" not in REQUIRED_COLUMNS
+    # Colunas novas do modelo devem estar presentes
+    assert "status_cartao" in REQUIRED_COLUMNS
+    assert "status_maq" in REQUIRED_COLUMNS
+    assert "faixa_maximo" in REQUIRED_COLUMNS
 
 
 def test_normalize_document_removes_mask_and_excel_decimal():
@@ -67,11 +72,11 @@ def test_upsert_sql_uses_latest_data_base_per_cliente():
     mock_mark_done.assert_called_once()
 
 
-def test_upsert_backfills_levels_for_touched_clients():
+def test_upsert_does_not_backfill_levels():
+    """nivel_cartao/nivel_conta foram removidos do modelo — backfill não deve ocorrer."""
     session = MagicMock()
     session.execute.side_effect = [
-        [("data_base",), ("cd_cpf_cnpj_cliente",), ("limite_cartao",), ("limite_conta",), ("nivel_cartao",), ("nivel_conta",)],
-        None,
+        [("data_base",), ("cd_cpf_cnpj_cliente",), ("nome_cliente",)],
         None,
         None,
         None,
@@ -84,12 +89,9 @@ def test_upsert_backfills_levels_for_touched_clients():
 
         run_upsert(session, "job-level")
 
-    assert session.execute.call_count == 5
-    backfill_sql = str(session.execute.call_args_list[4].args[0])
-    assert "UPDATE final_visao_cliente AS f" in backfill_sql
-    assert "nivel_cartao = CASE" in backfill_sql
-    assert "nivel_conta = CASE" in backfill_sql
-    assert "WHERE EXISTS" in backfill_sql
-
-    params = session.execute.call_args_list[4].args[1]
-    assert params["job_id"] == "job-level"
+    # Apenas 4 chamadas: schema query + change_history (insert) + change_history (update) + upsert
+    assert session.execute.call_count == 4
+    for call in session.execute.call_args_list:
+        sql = str(call.args[0])
+        assert "nivel_cartao" not in sql
+        assert "nivel_conta" not in sql
