@@ -169,20 +169,32 @@ def run_upsert(session: Session, job_id: str) -> None:
     conflict_target = f"({conflict_sql})"
     if CONFLICT_WHERE:
         conflict_target = f"{conflict_target} WHERE {CONFLICT_WHERE}"
-    source_select_sql = f"""
-        SELECT {columns_sql}
-        FROM (
-            SELECT
-                {columns_sql},
-                ROW_NUMBER() OVER (
-                    PARTITION BY cd_cpf_cnpj_cliente
-                    ORDER BY data_base DESC NULLS LAST
-                ) AS __rn
-            FROM {STAGING_TABLE}
-            WHERE etl_job_id = :job_id
-        ) ranked_source
-        WHERE __rn = 1
-    """
+
+    # Materializa a source deduplicada em tabela temporária.
+    # ROW_NUMBER() é calculado uma única vez e indexado — evita recomputar
+    # a window function em cada uma das 3 queries subsequentes.
+    session.execute(
+        text(f"""
+            CREATE TEMP TABLE _upsert_source AS
+            SELECT {columns_sql}
+            FROM (
+                SELECT
+                    {columns_sql},
+                    ROW_NUMBER() OVER (
+                        PARTITION BY cd_cpf_cnpj_cliente
+                        ORDER BY data_base DESC NULLS LAST
+                    ) AS __rn
+                FROM {STAGING_TABLE}
+                WHERE etl_job_id = :job_id
+            ) ranked_source
+            WHERE __rn = 1
+        """),
+        {"job_id": job_id},
+    )
+    session.execute(text("CREATE INDEX ON _upsert_source (cd_cpf_cnpj_cliente)"))
+
+    source_select_sql = "SELECT * FROM _upsert_source"
+
     incoming_is_newer = (
         f"COALESCE(EXCLUDED.data_base, '') >= COALESCE({FINAL_TABLE}.data_base, '')"
         if "data_base" in all_columns
@@ -206,17 +218,17 @@ def run_upsert(session: Session, job_id: str) -> None:
     if update_columns:
         upsert_sql = f"""
             INSERT INTO {FINAL_TABLE} ({columns_sql})
-            {source_select_sql}
+            SELECT {columns_sql} FROM _upsert_source
             ON CONFLICT {conflict_target} DO UPDATE SET {set_clause}
             {f"WHERE {incoming_is_newer}" if incoming_is_newer else ""}
         """
     else:
         upsert_sql = f"""
             INSERT INTO {FINAL_TABLE} ({columns_sql})
-            {source_select_sql}
+            SELECT {columns_sql} FROM _upsert_source
             ON CONFLICT {conflict_target} DO NOTHING
         """
 
-    session.execute(text(upsert_sql), {"job_id": job_id})
+    session.execute(text(upsert_sql))
 
     mark_step_done(session, job_id, "upsert")

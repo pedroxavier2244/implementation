@@ -37,9 +37,11 @@ def test_upsert_sql_uses_latest_data_base_per_cliente():
     session = MagicMock()
     session.execute.side_effect = [
         [("data_base",), ("cd_cpf_cnpj_cliente",), ("nome_cliente",)],
-        None,
-        None,
-        None,
+        None,  # CREATE TEMP TABLE _upsert_source
+        None,  # CREATE INDEX ON _upsert_source
+        None,  # INSERT change_history new rows
+        None,  # INSERT change_history update rows
+        None,  # main upsert
     ]
 
     with patch("worker.steps.upsert.is_step_done", return_value=False), patch(
@@ -49,26 +51,30 @@ def test_upsert_sql_uses_latest_data_base_per_cliente():
 
         run_upsert(session, "job-1")
 
-    assert session.execute.call_count == 4
+    assert session.execute.call_count == 6
 
-    insert_new_sql = str(session.execute.call_args_list[1].args[0])
+    # CREATE TEMP TABLE deve conter ROW_NUMBER e receber job_id como param
+    create_temp_sql = str(session.execute.call_args_list[1].args[0])
+    assert "ROW_NUMBER() OVER" in create_temp_sql
+    assert "PARTITION BY cd_cpf_cnpj_cliente" in create_temp_sql
+    assert "ORDER BY data_base DESC NULLS LAST" in create_temp_sql
+    params_temp = session.execute.call_args_list[1].args[1]
+    assert params_temp["job_id"] == "job-1"
+
+    insert_new_sql = str(session.execute.call_args_list[3].args[0])
     assert "visao_cliente_change_history" in insert_new_sql
     assert "'INSERT'" in insert_new_sql
 
-    insert_updates_sql = str(session.execute.call_args_list[2].args[0])
+    insert_updates_sql = str(session.execute.call_args_list[4].args[0])
     assert "jsonb_build_object" in insert_updates_sql
     assert "visao_cliente_change_history" in insert_updates_sql
     assert "jsonb_object_keys" in insert_updates_sql
 
-    sql_text = str(session.execute.call_args_list[3].args[0])
-    assert "ROW_NUMBER() OVER" in sql_text
-    assert "PARTITION BY cd_cpf_cnpj_cliente" in sql_text
-    assert "ORDER BY data_base DESC NULLS LAST" in sql_text
+    sql_text = str(session.execute.call_args_list[5].args[0])
     assert "ON CONFLICT (cd_cpf_cnpj_cliente) WHERE cd_cpf_cnpj_cliente IS NOT NULL" in sql_text
     assert "COALESCE(EXCLUDED.data_base, '') >= COALESCE(final_visao_cliente.data_base, '')" in sql_text
+    assert "_upsert_source" in sql_text
 
-    params = session.execute.call_args_list[3].args[1]
-    assert params["job_id"] == "job-1"
     mock_mark_done.assert_called_once()
 
 
@@ -77,9 +83,11 @@ def test_upsert_does_not_backfill_levels():
     session = MagicMock()
     session.execute.side_effect = [
         [("data_base",), ("cd_cpf_cnpj_cliente",), ("nome_cliente",)],
-        None,
-        None,
-        None,
+        None,  # CREATE TEMP TABLE _upsert_source
+        None,  # CREATE INDEX ON _upsert_source
+        None,  # INSERT change_history new rows
+        None,  # INSERT change_history update rows
+        None,  # main upsert
     ]
 
     with patch("worker.steps.upsert.is_step_done", return_value=False), patch(
@@ -89,8 +97,8 @@ def test_upsert_does_not_backfill_levels():
 
         run_upsert(session, "job-level")
 
-    # Apenas 4 chamadas: schema query + change_history (insert) + change_history (update) + upsert
-    assert session.execute.call_count == 4
+    # 6 chamadas: schema query + CREATE TEMP + CREATE INDEX + change_history (insert) + change_history (update) + upsert
+    assert session.execute.call_count == 6
     for call in session.execute.call_args_list:
         sql = str(call.args[0])
         assert "nivel_cartao" not in sql
