@@ -354,7 +354,7 @@ def _compute_insight_columns(dataframe) -> None:
     # ------------------------------------------------------------------ #
     # insight_bolcob
     # ------------------------------------------------------------------ #
-    sb = dataframe["status_bolcbob"].astype(str)
+    import numpy as np
 
     # sufixo de idade do CNPJ: " CNPJ com mais de 1 ano de fundação"
     dt_fundacao = _coerce_datetime(dataframe["dt_fundacao_empresa"])
@@ -363,6 +363,9 @@ def _compute_insight_columns(dataframe) -> None:
     dias_fundacao = (data_base_dt - dt_fundacao).dt.days.fillna(0)
     cnpj_age_suffix = pd.Series("", index=dataframe.index, dtype=object)
     cnpj_age_suffix[has_fundacao & (dias_fundacao > 365)] = " CNPJ com mais de 1 ano de fundação"
+    # versão com ponto final (usada no caso "não cadastrado com histórico")
+    cnpj_age_suffix_dot = cnpj_age_suffix.copy()
+    cnpj_age_suffix_dot[cnpj_age_suffix_dot != ""] += "."
 
     fmt_ult_emissao = _fmt_date(dataframe["dt_ult_emissao_bolcob"])
     qtd_emitido = dataframe["qtd_bolcob_emtd_mtd"].astype(str).str.replace(r"\.0$", "", regex=True).replace("nan", "0")
@@ -370,26 +373,33 @@ def _compute_insight_columns(dataframe) -> None:
     fmt_val_emitido = _fmt_series_brl(dataframe["vl_bolcob_emtd_mtd"])
     fmt_val_liq = _fmt_series_brl(dataframe["vl_bolcob_liq_mtd"])
 
-    insight_bolcob = pd.Series("Verificar situação do boleto.", index=dataframe.index, dtype=object)
-    insight_bolcob = insight_bolcob.where(
-        sb != "SEM BOLETO CADASTRADO",
-        "Sem boleto cadastrado." + cnpj_age_suffix,
+    fl_bolcob = _coerce_numeric(dataframe["fl_bolcob_cadastrado"]).fillna(0)
+    dt_prim_liq = _coerce_datetime(dataframe["dt_prim_liq_bolcob"])
+    qtd_liq_mtd_num = _coerce_numeric(dataframe["qtd_bolcob_liq_mtd"]).fillna(0)
+
+    is_cadastrado = fl_bolcob == 1
+    has_prim_liq = ~dt_prim_liq.isna()
+    has_liq_mtd = qtd_liq_mtd_num > 0
+
+    dataframe["insight_bolcob"] = np.select(
+        [
+            (~is_cadastrado) & has_prim_liq,
+            ~is_cadastrado,
+            is_cadastrado & ~has_prim_liq,
+            is_cadastrado & has_prim_liq & ~has_liq_mtd,
+            is_cadastrado & has_prim_liq & has_liq_mtd,
+        ],
+        [
+            "Verificar: boleto não cadastrado mas com histórico de liquidação." + cnpj_age_suffix_dot,
+            "Sem boleto cadastrado." + cnpj_age_suffix,
+            "Boleto cadastrado mas nunca emitido." + cnpj_age_suffix,
+            "Boleto emitido (última emissão: " + fmt_ult_emissao + ") sem liquidação no mês.",
+            "Boleto ativo: " + qtd_emitido + " emitido(s) (" + fmt_val_emitido
+            + ") e " + qtd_liq + " liquidado(s) (" + fmt_val_liq
+            + ") no mês. Última emissão: " + fmt_ult_emissao + ".",
+        ],
+        default="Verificar situação do boleto.",
     )
-    insight_bolcob = insight_bolcob.where(
-        sb != "BOLETO CADASTRADO - NUNCA EMITIDO",
-        "Boleto cadastrado mas nunca emitido." + cnpj_age_suffix,
-    )
-    insight_bolcob = insight_bolcob.where(
-        sb != "BOLETO EMITIDO MAS NAO LIQUIDADO",
-        "Boleto emitido (última emissão: " + fmt_ult_emissao + ") sem liquidação no mês.",
-    )
-    insight_bolcob = insight_bolcob.where(
-        sb != "ATIVO - UTILIZANDO",
-        "Boleto ativo: " + qtd_emitido + " emitido(s) (" + fmt_val_emitido
-        + ") e " + qtd_liq + " liquidado(s) (" + fmt_val_liq
-        + ") no mês. Última emissão: " + fmt_ult_emissao + ".",
-    )
-    dataframe["insight_bolcob"] = insight_bolcob
 
     # ------------------------------------------------------------------ #
     # insight_pix_forte
