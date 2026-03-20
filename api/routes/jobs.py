@@ -15,6 +15,17 @@ def run_job(request: JobRunRequest):
         if etl_file is None:
             raise HTTPException(status_code=404, detail="File not found")
 
+        active_job = (
+            session.query(EtlJobRun)
+            .filter(
+                EtlJobRun.file_id == request.file_id,
+                EtlJobRun.status.in_(["QUEUED", "RUNNING", "RETRYING"]),
+            )
+            .first()
+        )
+        if active_job:
+            return JobRunResponse(job_id=active_job.id, status=active_job.status)
+
     task = enqueue_task(
         "worker.tasks.run_etl",
         kwargs={"job_id": None, "file_id": request.file_id},

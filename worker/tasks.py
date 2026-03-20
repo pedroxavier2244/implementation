@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+from sqlalchemy import text
+
 from shared.db import get_db_session
 from shared.models import EtlFile, EtlJobRun
 from worker.celery_app import app
@@ -33,6 +35,22 @@ def run_etl(self, job_id: str | None, file_id: str | None):
             etl_file = session.query(EtlFile).filter_by(id=file_id).first()
             if etl_file is None:
                 raise ValueError(f"File not found: {file_id}")
+
+            already_running = (
+                session.query(EtlJobRun)
+                .filter(
+                    EtlJobRun.file_id == file_id,
+                    EtlJobRun.status == "RUNNING",
+                )
+                .first()
+            )
+            if already_running:
+                logger.warning(
+                    "Job already RUNNING for file %s (%s), skipping duplicate task",
+                    file_id,
+                    already_running.id,
+                )
+                return
 
             job = EtlJobRun(
                 id=str(uuid.uuid4()),
@@ -81,6 +99,20 @@ def run_etl(self, job_id: str | None, file_id: str | None):
 
             current_step = "upsert"
             run_upsert(session, job_id)
+            session.commit()
+
+            # Limpa staging do job concluído (evita acúmulo indefinido)
+            session.execute(
+                text("DELETE FROM etl.staging_visao_cliente WHERE etl_job_id = :job_id"),
+                {"job_id": job_id},
+            )
+            # Retenção: purga change_history com mais de 180 dias
+            session.execute(
+                text(
+                    "DELETE FROM etl.visao_cliente_change_history"
+                    " WHERE changed_at < NOW() - INTERVAL '180 days'"
+                )
+            )
             session.commit()
 
             job.status = "DONE"
