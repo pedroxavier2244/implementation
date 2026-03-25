@@ -1,5 +1,7 @@
 import re
 
+import pandas as pd
+
 from sqlalchemy.orm import Session
 
 from shared.visao_cliente_schema import normalize_column_name
@@ -24,8 +26,6 @@ def _normalize_data_base(value):
     text = str(value or "").strip()
     if not text or text.lower() in {"nan", "none", "nat"}:
         return None
-
-    import pandas as pd
 
     parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
     if pd.isna(parsed):
