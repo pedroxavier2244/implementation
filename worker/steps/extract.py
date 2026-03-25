@@ -1,35 +1,43 @@
 import io
+import threading
 import unicodedata
 
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from shared.minio_client import MinioClient
 from shared.visao_cliente_schema import SOURCE_SHEET_NAME
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 
+_cache_lock = threading.Lock()
 _dataframe_cache: dict[str, object] = {}
 _workbook_cache: dict[str, dict[str, object]] = {}
 
 
 def get_cached_dataframe(job_id: str):
-    return _dataframe_cache.get(job_id)
+    with _cache_lock:
+        return _dataframe_cache.get(job_id)
 
 
 def set_cached_dataframe(job_id: str, dataframe) -> None:
-    _dataframe_cache[job_id] = dataframe
+    with _cache_lock:
+        _dataframe_cache[job_id] = dataframe
 
 
 def get_cached_workbook(job_id: str):
-    return _workbook_cache.get(job_id)
+    with _cache_lock:
+        return _workbook_cache.get(job_id)
 
 
 def set_cached_workbook(job_id: str, workbook) -> None:
-    _workbook_cache[job_id] = workbook
+    with _cache_lock:
+        _workbook_cache[job_id] = workbook
 
 
 def clear_cached_dataframe(job_id: str) -> None:
-    _dataframe_cache.pop(job_id, None)
-    _workbook_cache.pop(job_id, None)
+    with _cache_lock:
+        _dataframe_cache.pop(job_id, None)
+        _workbook_cache.pop(job_id, None)
 
 
 def _normalize_name(value: str) -> str:
@@ -54,8 +62,6 @@ def run_extract(session: Session, job_id: str, etl_file) -> None:
     if is_step_done(session, job_id, "extract"):
         return
     begin_step(session, job_id, "extract")
-
-    import pandas as pd
 
     minio = MinioClient()
     file_bytes = minio.download_file(etl_file.minio_path)
