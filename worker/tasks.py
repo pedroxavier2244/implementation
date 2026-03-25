@@ -111,8 +111,10 @@ def run_etl(self, job_id: str | None, file_id: str | None):
             # Cleanup runs after commit — non-critical, best-effort
             try:
                 session.execute(
-                    text("DELETE FROM etl.staging_visao_cliente WHERE etl_job_id = :job_id"),
-                    {"job_id": job_id},
+                    text(
+                        "DELETE FROM etl.staging_visao_cliente"
+                        " WHERE loaded_at < NOW() - INTERVAL '90 days'"
+                    )
                 )
                 session.execute(
                     text(
