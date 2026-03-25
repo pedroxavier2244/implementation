@@ -12,7 +12,7 @@ from api.schemas.data import (
     VisaoClienteSearchOut,
 )
 from shared.db import get_db_session
-from shared.visao_cliente_schema import FINAL_TABLE_NAME, REQUIRED_COLUMNS, STAGING_TABLE_NAME
+from shared.visao_cliente_schema import FINAL_TABLE_NAME, REQUIRED_COLUMNS
 
 _DIFF_IGNORE_FIELDS = frozenset({"etl_job_id", "loaded_at", "__total"})
 
@@ -41,7 +41,6 @@ def _compute_diff(
 
 router = APIRouter(prefix="/data", tags=["data"])
 
-OUTPUT_COLUMNS = tuple(REQUIRED_COLUMNS)
 CHANGE_HISTORY_TABLE = "visao_cliente_change_history"
 
 
@@ -54,7 +53,7 @@ def _is_cnpj(documento: str) -> bool:
 
 
 def _normalize_output_item(item: dict) -> dict:
-    normalized = {column: None for column in OUTPUT_COLUMNS}
+    normalized = {column: None for column in REQUIRED_COLUMNS}
     normalized.update(item)
     return normalized
 
@@ -129,11 +128,17 @@ def get_visao_cliente_historico(
     with get_db_session() as session:
         rows = session.execute(
             text(
-                f"""
-                SELECT *, COUNT(*) OVER() AS __total
-                FROM {STAGING_TABLE_NAME}
-                WHERE cd_cpf_cnpj_cliente = :documento
-                ORDER BY data_base ASC NULLS LAST, loaded_at ASC
+                """
+                SELECT
+                    h.etl_job_id,
+                    h.data_base,
+                    MIN(h.changed_at) AS changed_at,
+                    COUNT(*) AS campos_alterados_count,
+                    COUNT(*) OVER() AS __total
+                FROM etl.visao_cliente_change_history h
+                WHERE h.documento = :documento
+                GROUP BY h.etl_job_id, h.data_base
+                ORDER BY h.data_base ASC NULLS LAST, MIN(h.changed_at) ASC
                 LIMIT :limit OFFSET :offset
                 """
             ),
@@ -143,22 +148,16 @@ def get_visao_cliente_historico(
     total = int(rows[0]["__total"]) if rows else 0
 
     snapshots = []
-    anterior: dict | None = None
     for row in rows:
         row_dict = dict(row)
         row_dict.pop("__total", None)
-
-        diff = _compute_diff(anterior, row_dict)
-        dados = {k: v for k, v in row_dict.items() if k not in ("etl_job_id", "loaded_at")}
-
         snapshots.append(SnapshotItem(
             data_base=row_dict.get("data_base"),
-            carregado_em=row_dict.get("loaded_at"),
+            carregado_em=row_dict.get("changed_at"),
             etl_job_id=str(row_dict["etl_job_id"]) if row_dict.get("etl_job_id") else None,
-            campos_alterados=diff,
-            dados=dados,
+            campos_alterados={"campos_modificados": int(row_dict.get("campos_alterados_count", 0))},
+            dados={},
         ))
-        anterior = row_dict
 
     return VisaoClienteHistoricoOut(
         documento_consultado=documento_consultado,
