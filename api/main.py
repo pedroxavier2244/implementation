@@ -1,6 +1,10 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import redis as redis_lib
+
+logger = logging.getLogger(__name__)
 
 from api.routes import data, files, jobs
 from shared.config import get_settings
@@ -38,7 +42,8 @@ def ready():
 
             conn.execute(text("SELECT 1"))
     except Exception as exc:
-        status["postgres"] = f"error: {exc}"
+        logger.error("Readiness check failed for %s: %s", "postgres", exc)
+        status["postgres"] = "connection failed"
         status["ready"] = False
         http_status = 503
 
@@ -47,7 +52,8 @@ def ready():
         redis_client = redis_lib.from_url(settings.REDIS_URL, socket_timeout=3)
         redis_client.ping()
     except Exception as exc:
-        status["redis"] = f"error: {exc}"
+        logger.error("Readiness check failed for %s: %s", "redis", exc)
+        status["redis"] = "connection failed"
         status["ready"] = False
         http_status = 503
 
@@ -56,7 +62,8 @@ def ready():
 
         MinioClient()
     except Exception as exc:
-        status["minio"] = f"error: {exc}"
+        logger.error("Readiness check failed for %s: %s", "minio", exc)
+        status["minio"] = "connection failed"
         status["ready"] = False
         http_status = 503
 
