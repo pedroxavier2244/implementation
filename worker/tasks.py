@@ -40,13 +40,15 @@ def run_etl(self, job_id: str | None, file_id: str | None):
                 session.query(EtlJobRun)
                 .filter(
                     EtlJobRun.file_id == file_id,
-                    EtlJobRun.status == "RUNNING",
+                    EtlJobRun.status.in_(["RUNNING", "RETRYING", "QUEUED"]),
                 )
+                .with_for_update(skip_locked=True)
                 .first()
             )
             if already_running:
                 logger.warning(
-                    "Job already RUNNING for file %s (%s), skipping duplicate task",
+                    "Job already active (%s) for file %s (%s), skipping duplicate task",
+                    already_running.status,
                     file_id,
                     already_running.id,
                 )
@@ -99,26 +101,31 @@ def run_etl(self, job_id: str | None, file_id: str | None):
 
             current_step = "upsert"
             run_upsert(session, job_id)
-            session.commit()
 
-            # Limpa staging do job concluído (evita acúmulo indefinido)
-            session.execute(
-                text("DELETE FROM etl.staging_visao_cliente WHERE etl_job_id = :job_id"),
-                {"job_id": job_id},
-            )
-            # Retenção: purga change_history com mais de 180 dias
-            session.execute(
-                text(
-                    "DELETE FROM etl.visao_cliente_change_history"
-                    " WHERE changed_at < NOW() - INTERVAL '180 days'"
-                )
-            )
-            session.commit()
-
+            # Mark job done BEFORE cleanup — all in same transaction
             job.status = "DONE"
             job.finished_at = datetime.now(timezone.utc)
             etl_file.is_processed = True
-            clear_cached_dataframe(job_id)
+            session.commit()
+
+            # Cleanup runs after commit — non-critical, best-effort
+            try:
+                session.execute(
+                    text("DELETE FROM etl.staging_visao_cliente WHERE etl_job_id = :job_id"),
+                    {"job_id": job_id},
+                )
+                session.execute(
+                    text(
+                        "DELETE FROM etl.visao_cliente_change_history"
+                        " WHERE changed_at < NOW() - INTERVAL '180 days'"
+                    )
+                )
+                session.commit()
+            except Exception as cleanup_exc:
+                logger.warning("Non-critical cleanup failed for job %s: %s", job_id, cleanup_exc)
+                session.rollback()
+            finally:
+                clear_cached_dataframe(job_id)
 
         except Exception as exc:
             session.rollback()
