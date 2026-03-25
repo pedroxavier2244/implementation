@@ -5,7 +5,8 @@ from functools import lru_cache
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # PostgreSQL
+    # PostgreSQL — set DATABASE_URL to override individual fields (e.g. Neon/Supabase)
+    DATABASE_URL: str = ""
     POSTGRES_HOST: str = "postgres"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "etl_db"
@@ -49,6 +50,12 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        if self.DATABASE_URL:
+            url = self.DATABASE_URL
+            # Ensure psycopg2 driver prefix
+            if url.startswith("postgresql://") or url.startswith("postgres://"):
+                url = url.replace("://", "+psycopg2://", 1)
+            return url
         return (
             f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
