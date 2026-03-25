@@ -70,7 +70,7 @@ services:
     build:
       context: .
       dockerfile: worker/Dockerfile
-    command: celery -A worker.celery_app worker -Q etl_jobs -c 2 --loglevel=info
+    command: celery -A worker.celery_app worker -Q etl_jobs -c 1 --loglevel=info
     env_file: .env
     depends_on:
       postgres: { condition: service_healthy }
