@@ -12,7 +12,7 @@ def _missing_required_columns(columns: list[str]) -> list[str]:
     if not REQUIRED_COLUMNS:
         return []
     normalized = {normalize_column_name(c) for c in columns}
-    return [col for col in REQUIRED_COLUMNS if col.lower() not in normalized]
+    return [col for col in REQUIRED_COLUMNS if col not in normalized]
 
 
 def run_validate(session: Session, job_id: str, etl_file) -> None:
