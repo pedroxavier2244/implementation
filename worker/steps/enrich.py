@@ -1,5 +1,7 @@
 import logging
 
+import numpy as np
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from shared.visao_cliente_schema import REQUIRED_COLUMNS
@@ -14,8 +16,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _coerce_numeric(series):
-    import pandas as pd
-
     cleaned = series.astype(str).str.strip()
     cleaned = cleaned.replace({"": None, "nan": None, "none": None, "nat": None, "None": None})
     cleaned = cleaned.str.replace(r"[^0-9,.\-]", "", regex=True)
@@ -36,8 +36,6 @@ def _coerce_numeric(series):
 
 
 def _coerce_datetime(series):
-    import pandas as pd
-
     if pd.api.types.is_datetime64_any_dtype(series):
         return pd.to_datetime(series, errors="coerce")
 
@@ -49,8 +47,6 @@ def _coerce_datetime(series):
 
 def _fmt_brl(value) -> str:
     """Formata um valor numérico como moeda BRL: R$ 1.234,56"""
-    import pandas as pd
-
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "R$ 0,00"
     s = f"{float(value):,.2f}"
@@ -90,8 +86,6 @@ def _compute_status_cartao(dataframe) -> None:
       ATIVOU CREDITO - NAO UTILIZANDO                    : tem limite, com ativação, sem spending
       VALIDAR                                            : demais casos
     """
-    import numpy as np
-
     dt_entrega = _coerce_datetime(dataframe["dt_entrega_cartao"])
     dt_ativ = _coerce_datetime(dataframe["dt_ativ_cartao_cred"])
     lim_cartao = _coerce_numeric(dataframe["limite_cartao"]).fillna(0)
@@ -141,8 +135,6 @@ def _compute_status_maq(dataframe) -> None:
 
     Depende de total_tpv (deve ser calculado antes).
     """
-    import numpy as np
-
     status_proposta = dataframe["status_proposta_sf_pay"].astype(str).str.strip()
     fl_eleg = _coerce_numeric(dataframe["fl_elegivel_venda_c6pay"]).fillna(0)
     dt_install = _coerce_datetime(dataframe["dt_install_maq"])
@@ -201,8 +193,6 @@ def _compute_status_bolcob(dataframe) -> None:
       ATIVO - UTILIZANDO              : fl_bolcob = 1, com liquidação no mês
       VERIFICAR                       : demais casos
     """
-    import numpy as np
-
     fl_bolcob = _coerce_numeric(dataframe["fl_bolcob_cadastrado"]).fillna(0)
     dt_prim = _coerce_datetime(dataframe["dt_prim_liq_bolcob"])
     qtd_liq_mtd = _coerce_numeric(dataframe["qtd_bolcob_liq_mtd"]).fillna(0)
@@ -238,8 +228,6 @@ def _compute_insight_columns(dataframe) -> None:
       insight_cartao, insight_maq, insight_bolcob,
       insight_pix_forte, insight_conta_global
     """
-    import pandas as pd
-
     def _fmt_date(series):
         dt = _coerce_datetime(series)
         return dt.dt.strftime("%d/%m/%Y").where(~dt.isna(), "")
@@ -354,8 +342,6 @@ def _compute_insight_columns(dataframe) -> None:
     # ------------------------------------------------------------------ #
     # insight_bolcob
     # ------------------------------------------------------------------ #
-    import numpy as np
-
     # sufixo de idade do CNPJ: " CNPJ com mais de 1 ano de fundação"
     dt_fundacao = _coerce_datetime(dataframe["dt_fundacao_empresa"])
     data_base_dt = _coerce_datetime(dataframe["data_base"])
@@ -420,7 +406,7 @@ def _compute_insight_columns(dataframe) -> None:
     )
     insight_pix = insight_pix.where(
         ~(has_pix & ~has_cnpj),
-        "Chave(s) PIX cadastrada(s): " + chaves + ". Sem chave CNPJ \u2014 incentivar cadastro.",
+        "Chave(s) PIX cadastrada(s): " + chaves + ". Sem chave CNPJ - incentivar cadastro.",
     )
     dataframe["insight_pix_forte"] = insight_pix
 
@@ -445,9 +431,6 @@ def _compute_gap_columns(dataframe) -> None:
     FAIXA_MAXIMO = MAX(cash_in, domicilio, saldo_medio, cash_in_global)
     Nota: faixa_spending não entra no MAX (modelo RELATORIO.FORMULASS).
     """
-    import numpy as np
-    import pandas as pd
-
     faixa_cash = _coerce_numeric(dataframe["faixa_cash_in"]).fillna(0)
     faixa_domicilio = _coerce_numeric(dataframe["faixa_domicilio"]).fillna(0)
     faixa_saldo = _coerce_numeric(dataframe["faixa_saldo_medio"]).fillna(0)
@@ -502,9 +485,10 @@ def _compute_gap_columns(dataframe) -> None:
         is_max | (faixa_global >= faixa_alvo_num), 0,
         np.maximum(target_global - current_global, 0),
     )
+    tpv_m2 = _coerce_numeric(dataframe["tpv_m2"]).fillna(0)
     dataframe["gap_domicilio"] = np.where(
         is_max | (faixa_domicilio >= faixa_alvo_num), 0,
-        None,
+        np.maximum(target_domicilio - tpv_m2, 0),
     )
 
     def _progress(gap, target):
@@ -557,8 +541,6 @@ def _compute_status_qualificacao(dataframe) -> None:
       E: Perdeu qualificação  — ja_pago>0, previsao=0, faixa_alvo≠"MAX"
       -: Não classificado     — demais casos
     """
-    import numpy as np
-
     ja_pago = _coerce_numeric(dataframe["ja_pago_comiss"]).fillna(0)
     previsao = _coerce_numeric(dataframe["previsao_comiss"]).fillna(0)
     faixa_alvo = dataframe["faixa_alvo"].astype(str)
