@@ -57,6 +57,12 @@ def get_file(file_id: str):
 @router.post("/upload", response_model=FileOut)
 def upload_file(file: UploadFile = File(...)):
     file_bytes = file.file.read()
+    MAX_UPLOAD_BYTES = 52_428_800  # 50 MB
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {len(file_bytes)} bytes (max {MAX_UPLOAD_BYTES} bytes / 50 MB)",
+        )
     file_hash = hashlib.sha256(file_bytes).hexdigest()
     today = date.today()
 
