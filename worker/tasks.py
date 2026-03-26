@@ -116,6 +116,19 @@ def run_etl(self, job_id: str | None, file_id: str | None):
                         " WHERE loaded_at < NOW() - INTERVAL '90 days'"
                     )
                 )
+                # Arquiva histórico antigo antes de deletar — preserva auditoria completa
+                session.execute(
+                    text("""
+                        INSERT INTO etl.visao_cliente_change_history_archive
+                            (id, documento, etl_job_id, file_id, data_base,
+                             change_type, field_name, old_value, new_value, changed_at)
+                        SELECT id, documento, etl_job_id, file_id, data_base,
+                               change_type, field_name, old_value, new_value, changed_at
+                        FROM etl.visao_cliente_change_history
+                        WHERE changed_at < NOW() - INTERVAL '180 days'
+                        ON CONFLICT (id) DO NOTHING
+                    """)
+                )
                 session.execute(
                     text(
                         "DELETE FROM etl.visao_cliente_change_history"
