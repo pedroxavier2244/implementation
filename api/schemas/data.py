@@ -48,3 +48,13 @@ class VisaoClienteChangeHistoryOut(BaseModel):
     limit: int
     offset: int
     items: list[ChangeHistoryItem]
+
+
+class VisaoClienteEditIn(BaseModel):
+    campos: dict[str, Any]
+
+
+class VisaoClienteEditOut(BaseModel):
+    documento: str
+    campos_atualizados: list[str]
+    campos_ignorados: list[str]  # campos que não existem na tabela ou sem mudança

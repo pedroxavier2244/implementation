@@ -1,13 +1,15 @@
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from sqlalchemy import text
 
 from api.schemas.data import (
     ChangeHistoryItem,
     SnapshotItem,
     VisaoClienteChangeHistoryOut,
+    VisaoClienteEditIn,
+    VisaoClienteEditOut,
     VisaoClienteHistoricoOut,
     VisaoClienteSearchOut,
 )
@@ -219,4 +221,74 @@ def get_visao_cliente_historico_alteracoes(
         limit=limit,
         offset=offset,
         items=items,
+    )
+
+
+@router.patch("/visao-cliente/{documento}", response_model=VisaoClienteEditOut)
+def patch_visao_cliente(
+    documento: str,
+    body: VisaoClienteEditIn = Body(...),
+):
+    """Edita campos de um cliente no banco final sem precisar reprocessar o arquivo.
+    Cada campo alterado é registrado no histórico como MANUAL_EDIT."""
+    documento_consultado = _only_digits(documento)
+    if not documento_consultado:
+        raise HTTPException(status_code=400, detail="documento must contain digits")
+
+    if not body.campos:
+        raise HTTPException(status_code=400, detail="campos não pode ser vazio")
+
+    # Apenas colunas que existem em REQUIRED_COLUMNS são aceitas
+    colunas_validas = set(REQUIRED_COLUMNS)
+    campos_invalidos = [k for k in body.campos if k not in colunas_validas]
+
+    with get_db_session() as session:
+        row = session.execute(
+            text(f"SELECT * FROM {FINAL_TABLE_NAME} WHERE cd_cpf_cnpj_cliente = :doc"),
+            {"doc": documento_consultado},
+        ).mappings().first()
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="documento não encontrado")
+
+        row_dict = dict(row)
+        data_base = row_dict.get("data_base")
+
+        atualizados = []
+        ignorados = list(campos_invalidos)
+
+        for campo, novo_valor in body.campos.items():
+            if campo not in colunas_validas:
+                continue
+            valor_atual = row_dict.get(campo)
+            # Ignora se o valor não mudou
+            if str(valor_atual) == str(novo_valor) if novo_valor is not None else valor_atual is None:
+                ignorados.append(campo)
+                continue
+
+            session.execute(
+                text(f"UPDATE {FINAL_TABLE_NAME} SET {campo} = :val WHERE cd_cpf_cnpj_cliente = :doc"),
+                {"val": novo_valor, "doc": documento_consultado},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO visao_cliente_change_history
+                        (documento, etl_job_id, file_id, data_base, change_type, field_name, old_value, new_value, changed_at)
+                    VALUES
+                        (:doc, NULL, NULL, :data_base, 'MANUAL_EDIT', :campo, :old_val, :new_val, NOW())
+                """),
+                {
+                    "doc": documento_consultado,
+                    "data_base": str(data_base) if data_base else None,
+                    "campo": campo,
+                    "old_val": str(valor_atual) if valor_atual is not None else None,
+                    "new_val": str(novo_valor) if novo_valor is not None else None,
+                },
+            )
+            atualizados.append(campo)
+
+    return VisaoClienteEditOut(
+        documento=documento_consultado,
+        campos_atualizados=atualizados,
+        campos_ignorados=ignorados,
     )
