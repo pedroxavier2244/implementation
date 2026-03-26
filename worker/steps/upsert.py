@@ -142,6 +142,7 @@ def run_upsert(session: Session, job_id: str) -> None:
     if is_step_done(session, job_id, "upsert"):
         return
     begin_step(session, job_id, "upsert")
+    session.commit()  # commit begin_step antes de iniciar operações longas
 
     result = session.execute(
         text(
@@ -171,8 +172,9 @@ def run_upsert(session: Session, job_id: str) -> None:
         conflict_target = f"{conflict_target} WHERE {CONFLICT_WHERE}"
 
     # Materializa a source deduplicada em tabela temporária.
-    # ROW_NUMBER() é calculado uma única vez e indexado — evita recomputar
-    # a window function em cada uma das 3 queries subsequentes.
+    # Tabelas temporárias sobrevivem a COMMITs dentro da mesma sessão —
+    # cada operação subsequente tem sua própria transação curta.
+    session.execute(text("DROP TABLE IF EXISTS _upsert_source"))
     session.execute(
         text(f"""
             CREATE TEMP TABLE _upsert_source AS
@@ -192,6 +194,7 @@ def run_upsert(session: Session, job_id: str) -> None:
         {"job_id": job_id},
     )
     session.execute(text("CREATE INDEX ON _upsert_source (cd_cpf_cnpj_cliente)"))
+    session.commit()  # commit após criar e indexar a temp table
 
     source_select_sql = "SELECT * FROM _upsert_source"
 
@@ -214,6 +217,7 @@ def run_upsert(session: Session, job_id: str) -> None:
         history_columns=history_columns,
         source_is_newer_sql=source_is_newer,
     )
+    session.commit()  # commit após history inserts
 
     if update_columns:
         upsert_sql = f"""
@@ -230,5 +234,6 @@ def run_upsert(session: Session, job_id: str) -> None:
         """
 
     session.execute(text(upsert_sql))
+    session.commit()  # commit após upsert final
 
     mark_step_done(session, job_id, "upsert")

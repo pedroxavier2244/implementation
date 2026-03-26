@@ -10,10 +10,14 @@ from worker.steps.extract import get_cached_dataframe
 STAGING_TABLE = STAGING_TABLE_NAME
 
 
+_STAGE_BATCH_SIZE = 5_000
+
+
 def run_stage(session: Session, job_id: str) -> None:
     if is_step_done(session, job_id, "stage"):
         return
     begin_step(session, job_id, "stage")
+    session.commit()
 
     dataframe = get_cached_dataframe(job_id)
     if dataframe is None:
@@ -23,18 +27,26 @@ def run_stage(session: Session, job_id: str) -> None:
         text(f"DELETE FROM etl.{STAGING_TABLE} WHERE etl_job_id = :job_id"),
         {"job_id": job_id},
     )
+    session.commit()
 
     df_to_insert = dataframe.copy()
     df_to_insert["etl_job_id"] = job_id
     df_to_insert["loaded_at"] = datetime.now(timezone.utc)
-    df_to_insert.to_sql(
-        STAGING_TABLE,
-        con=session.get_bind(),
-        schema="etl",
-        if_exists="append",
-        index=False,
-        method="multi",
-        chunksize=500,
-    )
+
+    # Insere em lotes com commit a cada lote — evita transações longas que
+    # o Neon encerra por timeout de SSL em arquivos grandes.
+    engine = session.get_bind()
+    with engine.connect() as conn:
+        for start in range(0, len(df_to_insert), _STAGE_BATCH_SIZE):
+            chunk = df_to_insert.iloc[start:start + _STAGE_BATCH_SIZE]
+            chunk.to_sql(
+                STAGING_TABLE,
+                con=conn,
+                schema="etl",
+                if_exists="append",
+                index=False,
+                method="multi",
+            )
+            conn.commit()
 
     mark_step_done(session, job_id, "stage")
