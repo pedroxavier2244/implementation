@@ -32,7 +32,9 @@ def _coerce_numeric(series):
     cleaned.loc[mask_only_comma] = cleaned.loc[mask_only_comma].str.replace(",", ".", regex=False)
 
     cleaned = cleaned.replace({"": None, "-": None, ".": None, ",": None, "-.": None})
-    return pd.to_numeric(cleaned, errors="coerce")
+    result = pd.to_numeric(cleaned, errors="coerce")
+    # Replace inf/-inf with NaN to avoid overflow in downstream arithmetic
+    return result.replace([np.inf, -np.inf], np.nan)
 
 
 def _coerce_datetime(series):
@@ -572,6 +574,9 @@ def run_enrich(session: Session, job_id: str) -> None:
     if is_step_done(session, job_id, "enrich"):
         return
     begin_step(session, job_id, "enrich")
+
+    # Suppress numpy overflow warnings — overflows are handled as NaN via _coerce_numeric
+    np.seterr(over="ignore", invalid="ignore")
 
     dataframe = get_cached_dataframe(job_id)
     if dataframe is None:
