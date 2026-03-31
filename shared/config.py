@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     CNPJ_CACHE_TTL_DAYS: int = 30
     BRASILAPI_TIMEOUT: int = 10
 
+    # Google Drive integration
+    GOOGLE_DRIVE_FOLDER_ID: str = ""
+    # Either the path to a service account JSON file, or the raw JSON content
+    GOOGLE_SERVICE_ACCOUNT_JSON: str = ""
+
     @property
     def database_url(self) -> str:
         if self.DATABASE_URL:

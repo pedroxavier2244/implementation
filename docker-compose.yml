@@ -81,6 +81,19 @@ services:
       - cnpj_net
     restart: unless-stopped
 
+  worker-beat:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    command: celery -A worker.celery_app beat --loglevel=info
+    env_file: .env
+    depends_on:
+      redis: { condition: service_healthy }
+    networks:
+      - default
+      - cnpj_net
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   minio_data:

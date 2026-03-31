@@ -1,5 +1,6 @@
 try:
     from celery import Celery
+    from celery.schedules import crontab
 except ModuleNotFoundError:
     class _DummyTaskResult:
         id = "mock-task-id"
@@ -16,6 +17,8 @@ except ModuleNotFoundError:
 
             return decorator
 
+    crontab = None  # type: ignore[assignment]
+
 from shared.config import get_settings
 
 settings = get_settings()
@@ -24,16 +27,29 @@ app = Celery(
     "worker",
     broker=settings.celery_broker_url,
     backend=settings.REDIS_URL,
-    include=["worker.tasks"],
+    include=["worker.tasks", "checker.checker"],
 )
+
+_beat_schedule = {}
+if crontab is not None:
+    _beat_schedule = {
+        "drive-sync-daily": {
+            "task": "checker.checker.run_daily",
+            "schedule": crontab(
+                hour=settings.ETL_SCHEDULE_HOUR,
+                minute=settings.ETL_SCHEDULE_MINUTE,
+            ),
+        },
+    }
 
 app.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-    timezone="UTC",
+    timezone=settings.ETL_TIMEZONE,
     enable_utc=True,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
+    beat_schedule=_beat_schedule,
 )
