@@ -85,7 +85,7 @@ services:
     build:
       context: .
       dockerfile: worker/Dockerfile
-    command: celery -A worker.celery_app beat --loglevel=info
+    command: celery -A worker.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
     env_file: .env
     depends_on:
       redis: { condition: service_healthy }
