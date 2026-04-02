@@ -1,14 +1,14 @@
 """add pct_domicilio column to visao_cliente tables
 
 Revision ID: 000017
-Revises: 000016
+Revises: 20260326_000016
 Create Date: 2026-04-01
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "000017"
-down_revision = "000016"
+down_revision = "20260326_000016"
 branch_labels = None
 depends_on = None
 
