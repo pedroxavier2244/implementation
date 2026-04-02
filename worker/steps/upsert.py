@@ -135,8 +135,39 @@ def _insert_historico_only(
     )
 
 
+def _ensure_arquivo_partition(session: Session, data_ref_str: str) -> None:
+    """Cria partição mensal em historico_arquivo se ainda não existir."""
+    from datetime import datetime
+
+    # DATA_REFERENCIA pode ser DD/MM/YYYY ou YYYY-MM-DD
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
+        try:
+            d = datetime.strptime(str(data_ref_str).strip()[:10], fmt[:len(fmt.replace("%H:%M:%S","").strip())])
+            break
+        except ValueError:
+            continue
+    else:
+        logger.warning("DATA_REFERENCIA com formato desconhecido: %s — partição não criada", data_ref_str)
+        return
+
+    year, month = d.year, d.month
+    partition_name = f"historico_arquivo_{year}_{month:02d}"
+    from_date = f"{year}-{month:02d}-01"
+    to_year, to_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    to_date = f"{to_year}-{to_month:02d}-01"
+
+    session.execute(
+        text(f"""
+            CREATE TABLE IF NOT EXISTS public.{partition_name}
+                PARTITION OF public.historico_arquivo
+                FOR VALUES FROM ('{from_date}') TO ('{to_date}')
+        """)
+    )
+
+
 def _prune_historico(session: Session) -> None:
-    """Remove datas mais antigas do historico, mantendo apenas HISTORICO_MAX_DATES datas distintas."""
+    """Move datas antigas do historico → historico_arquivo (particionado por mês), mantendo
+    apenas HISTORICO_MAX_DATES datas distintas no historico ativo."""
     max_dates = get_settings().HISTORICO_MAX_DATES
     rows = session.execute(
         text(
@@ -151,12 +182,32 @@ def _prune_historico(session: Session) -> None:
         logger.info("Historico com %d data(s) — dentro do limite de %d.", len(dates), max_dates)
         return
 
-    to_delete = dates[max_dates:]
-    logger.info("Podando historico: removendo %d data(s) antiga(s): %s", len(to_delete), to_delete)
-    for date in to_delete:
+    to_archive = dates[max_dates:]
+    logger.info("Arquivando %d data(s) antiga(s) → historico_arquivo: %s", len(to_archive), to_archive)
+
+    for date in to_archive:
+        # Garante que a partição mensal existe
+        _ensure_arquivo_partition(session, date)
+
+        # Move para historico_arquivo
+        result = session.execute(
+            text("""
+                INSERT INTO public.historico_arquivo
+                SELECT *, TO_DATE("DATA_REFERENCIA", 'DD/MM/YYYY') AS data_ref_date
+                FROM public.historico
+                WHERE "DATA_REFERENCIA" = :d
+                ON CONFLICT DO NOTHING
+            """),
+            {"d": date},
+        )
+        archived = result.rowcount
+
+        # Remove do historico ativo
         session.execute(
             text('DELETE FROM historico WHERE "DATA_REFERENCIA" = :d'),
             {"d": date},
         )
+        logger.info("DATA_REFERENCIA=%s: %d linha(s) movidas para historico_arquivo", date, archived)
+
     session.commit()
-    logger.info("Historico agora tem %d data(s).", max_dates)
+    logger.info("Historico ativo agora tem %d data(s). Arquivo total preservado.", max_dates)
