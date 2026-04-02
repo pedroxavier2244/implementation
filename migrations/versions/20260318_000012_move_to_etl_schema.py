@@ -18,18 +18,20 @@ def upgrade() -> None:
     # 1. Create schema
     op.execute("CREATE SCHEMA IF NOT EXISTS etl")
 
-    # 2. Grant permissions to app role (tables + sequences for autoincrement)
-    op.execute("GRANT USAGE ON SCHEMA etl TO etl_user")
-    op.execute("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA etl TO etl_user")
-    op.execute("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA etl TO etl_user")
-    op.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA etl GRANT ALL ON TABLES TO etl_user")
-    op.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA etl GRANT USAGE, SELECT ON SEQUENCES TO etl_user")
-
-    # 3. Set permanent search_path for the role
-    # The integration schema does not exist yet — PostgreSQL silently ignores
-    # nonexistent schemas in search_path, so this is safe.
-    # Constraint: no table name may exist in both etl and integration schemas.
-    op.execute("ALTER ROLE etl_user SET search_path = etl, integration, public")
+    # 2. Grant permissions to app role (only if etl_user exists — skipped on Supabase)
+    op.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'etl_user') THEN
+                EXECUTE 'GRANT USAGE ON SCHEMA etl TO etl_user';
+                EXECUTE 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA etl TO etl_user';
+                EXECUTE 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA etl TO etl_user';
+                EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA etl GRANT ALL ON TABLES TO etl_user';
+                EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA etl GRANT USAGE, SELECT ON SEQUENCES TO etl_user';
+                EXECUTE 'ALTER ROLE etl_user SET search_path = etl, integration, public';
+            END IF;
+        END $$
+    """)
 
     # 4. Move ETL tables (no specific ordering needed — SET SCHEMA does not drop FK constraints)
     op.execute("ALTER TABLE public.etl_file                     SET SCHEMA etl")
