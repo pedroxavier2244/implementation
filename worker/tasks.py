@@ -14,6 +14,7 @@ from worker.steps.clean import run_clean
 from worker.steps.enrich import run_enrich
 from worker.steps.extract import clear_cached_dataframe, run_extract
 from worker.steps.stage import run_stage
+from worker.steps.assign_leads import run_assign_leads
 from worker.steps.upsert import run_upsert
 from worker.steps.validate import run_validate
 
@@ -23,7 +24,7 @@ def compute_retry_delay(retry_number: int) -> int:
 
 
 @app.task(name="worker.tasks.run_etl", bind=True, queue="etl_jobs")
-def run_etl(self, job_id: str | None, file_id: str | None):
+def run_etl(self, job_id: str | None, file_id: str | None, historico_only: bool = False):
     # 1. Create/fetch job and commit immediately so it's visible in the API
     with get_db_session() as session:
         if job_id:
@@ -61,6 +62,7 @@ def run_etl(self, job_id: str | None, file_id: str | None):
                 triggered_by="scheduler",
                 started_at=datetime.now(timezone.utc),
                 max_retries=3,
+                historico_only=historico_only,
             )
             session.add(job)
             job_id = job.id
@@ -100,7 +102,11 @@ def run_etl(self, job_id: str | None, file_id: str | None):
             session.commit()
 
             current_step = "upsert"
-            run_upsert(session, job_id)
+            run_upsert(session, job_id, historico_only=bool(job.historico_only))
+
+            if not job.historico_only:
+                current_step = "assign_leads"
+                run_assign_leads(session, job_id)
 
             # Mark job done BEFORE cleanup — all in same transaction
             job.status = "DONE"

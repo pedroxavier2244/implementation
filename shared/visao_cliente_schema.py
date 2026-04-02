@@ -3,9 +3,32 @@ import unicodedata
 
 SOURCE_SHEET_NAME = "Visão Cliente"
 STAGING_TABLE_NAME = "staging_visao_cliente"
-FINAL_TABLE_NAME = "final_visao_cliente"
-UPSERT_CONFLICT_COLUMNS = ("cd_cpf_cnpj_cliente",)
-UPSERT_CONFLICT_WHERE = "cd_cpf_cnpj_cliente IS NOT NULL"
+FINAL_TABLE_NAME = "projetinho_pai"   # public schema — tabela do CRM
+FINAL_TABLE_SCHEMA = "public"
+UPSERT_CONFLICT_COLUMNS = ("CD_CPF_CNPJ_CLIENTE",)
+UPSERT_CONFLICT_WHERE = '"CD_CPF_CNPJ_CLIENTE" IS NOT NULL'
+
+# Mapeamento de colunas snake_case (staging/ETL) → UPPERCASE (projetinho_pai/CRM).
+# Colunas sem entrada aqui usam simplesmente col.upper().
+STAGING_TO_CRM_COLUMN_MAP: dict[str, str] = {
+    "pct_domicilio":       "PERC_DOMICILIO",
+    "pct_cash_in":         "PERC_CASH_IN",
+    "pct_spending":        "PERC_SPENDING",
+    "pct_saldo_medio":     "PERC_SALDO_MEDIO",
+    "pct_conta_global":    "PERC_CONTA_GLOBAL",
+    "maior_progresso_pct": "MAIOR_PROGRESSO_PERC",
+}
+
+# Mapeamento inverso: UPPERCASE (projetinho_pai) → snake_case (ETL/API).
+CRM_TO_STAGING_COLUMN_MAP: dict[str, str] = {v: k for k, v in STAGING_TO_CRM_COLUMN_MAP.items()}
+
+
+def crm_row_to_snake(row: dict) -> dict:
+    """Converte um registro do projetinho_pai (UPPERCASE) para snake_case (API/ETL)."""
+    return {
+        CRM_TO_STAGING_COLUMN_MAP.get(k, k.lower()): v
+        for k, v in row.items()
+    }
 
 # Exatamente 109 colunas — espelho fiel da planilha MODELO (RELATORIO.FORMULASS).
 # Ordem e nomes normalizados via normalize_column_name().

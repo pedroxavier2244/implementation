@@ -141,7 +141,7 @@ def test_required_columns_match_model():
     """REQUIRED_COLUMNS deve ter exatamente 108 colunas do modelo."""
     from shared.visao_cliente_schema import REQUIRED_COLUMNS
 
-    assert len(REQUIRED_COLUMNS) == 108
+    assert len(REQUIRED_COLUMNS) == 109
     # Novas colunas obrigatórias
     for col in ("total_tpv", "status_cartao", "status_maq", "status_bolcbob",
                 "insight_cartao", "insight_maq", "insight_bolcob",

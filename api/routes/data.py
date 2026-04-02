@@ -14,7 +14,12 @@ from api.schemas.data import (
     VisaoClienteSearchOut,
 )
 from shared.db import get_db_session
-from shared.visao_cliente_schema import FINAL_TABLE_NAME, REQUIRED_COLUMNS, STAGING_TABLE_NAME
+from shared.visao_cliente_schema import (
+    FINAL_TABLE_NAME,
+    REQUIRED_COLUMNS,
+    STAGING_TABLE_NAME,
+    crm_row_to_snake,
+)
 
 _DIFF_IGNORE_FIELDS = frozenset({"etl_job_id", "loaded_at", "__total"})
 
@@ -76,8 +81,8 @@ def get_visao_cliente_by_documento(
                 f"""
                 SELECT *, COUNT(*) OVER() AS __total
                 FROM {FINAL_TABLE_NAME}
-                WHERE cd_cpf_cnpj_cliente = :documento
-                ORDER BY data_base DESC NULLS LAST
+                WHERE "CD_CPF_CNPJ_CLIENTE" = :documento
+                ORDER BY "DATA_BASE" DESC NULLS LAST
                 LIMIT :limit OFFSET :offset
                 """
             ),
@@ -93,8 +98,8 @@ def get_visao_cliente_by_documento(
                     f"""
                     SELECT *, COUNT(*) OVER() AS __total
                     FROM {FINAL_TABLE_NAME}
-                    WHERE regexp_replace(COALESCE(cd_cpf_cnpj_cliente, ''), '[^0-9]', '', 'g') = :documento
-                    ORDER BY data_base DESC NULLS LAST
+                    WHERE regexp_replace(COALESCE("CD_CPF_CNPJ_CLIENTE", ''), '[^0-9]', '', 'g') = :documento
+                    ORDER BY "DATA_BASE" DESC NULLS LAST
                     LIMIT :limit OFFSET :offset
                     """
                 ),
@@ -104,8 +109,9 @@ def get_visao_cliente_by_documento(
 
     sanitized_rows = []
     for row in rows:
-        item = dict(row)
+        item = crm_row_to_snake(dict(row))
         item.pop("__total", None)
+        item.pop("id", None)
         sanitized_rows.append(_normalize_output_item(item))
 
     return VisaoClienteSearchOut(

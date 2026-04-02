@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     # Either the path to a service account JSON file, or the raw JSON content
     GOOGLE_SERVICE_ACCOUNT_JSON: str = ""
 
+    # Historico retention: number of distinct DATA_BASE dates to keep in historico table
+    HISTORICO_MAX_DATES: int = 5
+
+    # Carteira de clientes: chave no MinIO da planilha de atribuição (CNPJ → consultor)
+    # Ex: "carteira/latest.xlsx". Deixe vazio para desabilitar atribuição automática.
+    CARTEIRA_MINIO_KEY: str = "carteira/latest.xlsx"
+
     @property
     def database_url(self) -> str:
         if self.DATABASE_URL:

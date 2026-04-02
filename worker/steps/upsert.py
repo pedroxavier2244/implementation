@@ -1,239 +1,162 @@
+import logging
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from shared.config import get_settings
 from shared.visao_cliente_schema import (
     FINAL_TABLE_NAME,
     STAGING_TABLE_NAME,
-    UPSERT_CONFLICT_COLUMNS,
-    UPSERT_CONFLICT_WHERE,
+    STAGING_TO_CRM_COLUMN_MAP,
 )
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 
+logger = logging.getLogger(__name__)
+
 STAGING_TABLE = STAGING_TABLE_NAME
-FINAL_TABLE = FINAL_TABLE_NAME
-HISTORY_TABLE = "visao_cliente_change_history"
-CONFLICT_COLUMNS = UPSERT_CONFLICT_COLUMNS
-CONFLICT_WHERE = UPSERT_CONFLICT_WHERE
+PROJETINHO_PAI = FINAL_TABLE_NAME  # public.projetinho_pai
 
 
-def _numeric_sql_from_text(column_name: str) -> str:
-    cleaned = f"regexp_replace(COALESCE({column_name}, ''), '[^0-9,.-]', '', 'g')"
-    return (
-        "NULLIF("
-        "CASE "
-        f"WHEN {cleaned} LIKE '%,%' AND {cleaned} LIKE '%.%' "
-        f"THEN REPLACE(REPLACE({cleaned}, '.', ''), ',', '.') "
-        f"WHEN {cleaned} LIKE '%,%' THEN REPLACE({cleaned}, ',', '.') "
-        f"ELSE {cleaned} "
-        "END, "
-        "''"
-        ")::numeric"
-    )
-
-
-def _jsonb_payload_sql(alias: str, columns: list[str]) -> str:
-    if not columns:
-        return "'{}'::jsonb"
-
-    chunks: list[str] = []
-    # PostgreSQL limita chamadas de funcao a 100 argumentos.
-    # Cada coluna consome 2 argumentos no jsonb_build_object.
-    for index in range(0, len(columns), 40):
-        payload_parts: list[str] = []
-        for column in columns[index:index + 40]:
-            payload_parts.append(f"'{column}'")
-            payload_parts.append(f"{alias}.{column}")
-        chunks.append(f"jsonb_build_object({', '.join(payload_parts)})")
-    return " || ".join(chunks)
-
-
-def _insert_change_history(
-    session: Session,
-    job_id: str,
-    source_select_sql: str,
-    history_columns: list[str],
-    source_is_newer_sql: str | None,
-) -> None:
-    insert_new_rows_sql = f"""
-        INSERT INTO {HISTORY_TABLE} (
-            documento,
-            etl_job_id,
-            file_id,
-            data_base,
-            change_type,
-            field_name,
-            old_value,
-            new_value,
-            changed_at
-        )
-        SELECT
-            s.cd_cpf_cnpj_cliente,
-            :job_id,
-            j.file_id,
-            s.data_base,
-            'INSERT',
-            NULL,
-            NULL,
-            NULL,
-            CURRENT_TIMESTAMP
-        FROM ({source_select_sql}) AS s
-        JOIN etl_job_run AS j
-          ON j.id = :job_id
-        LEFT JOIN {FINAL_TABLE} AS f
-          ON f.cd_cpf_cnpj_cliente = s.cd_cpf_cnpj_cliente
-        WHERE s.cd_cpf_cnpj_cliente IS NOT NULL
-          AND f.cd_cpf_cnpj_cliente IS NULL
-    """
-    session.execute(text(insert_new_rows_sql), {"job_id": job_id})
-
-    if not history_columns:
-        return
-
-    source_payload_sql = _jsonb_payload_sql("s", history_columns)
-    final_payload_sql = _jsonb_payload_sql("f", history_columns)
-    newer_condition = source_is_newer_sql or "TRUE"
-
-    insert_updated_fields_sql = f"""
-        WITH changed_rows AS (
-            SELECT
-                s.cd_cpf_cnpj_cliente AS documento,
-                :job_id AS etl_job_id,
-                j.file_id AS file_id,
-                s.data_base AS data_base,
-                {source_payload_sql} AS source_payload,
-                {final_payload_sql} AS final_payload
-            FROM ({source_select_sql}) AS s
-            JOIN etl_job_run AS j
-              ON j.id = :job_id
-            JOIN {FINAL_TABLE} AS f
-              ON f.cd_cpf_cnpj_cliente = s.cd_cpf_cnpj_cliente
-            WHERE s.cd_cpf_cnpj_cliente IS NOT NULL
-              AND {newer_condition}
-        )
-        INSERT INTO {HISTORY_TABLE} (
-            documento,
-            etl_job_id,
-            file_id,
-            data_base,
-            change_type,
-            field_name,
-            old_value,
-            new_value,
-            changed_at
-        )
-        SELECT
-            documento,
-            etl_job_id,
-            file_id,
-            data_base,
-            'UPDATE',
-            diff.key,
-            final_payload ->> diff.key,
-            source_payload ->> diff.key,
-            CURRENT_TIMESTAMP
-        FROM changed_rows
-        CROSS JOIN LATERAL jsonb_object_keys(source_payload || final_payload) AS diff(key)
-        WHERE (final_payload ->> diff.key) IS DISTINCT FROM (source_payload ->> diff.key)
-    """
-    session.execute(text(insert_updated_fields_sql), {"job_id": job_id})
-
-
-def run_upsert(session: Session, job_id: str) -> None:
+def run_upsert(session: Session, job_id: str, historico_only: bool = False) -> None:
     if is_step_done(session, job_id, "upsert"):
         return
     begin_step(session, job_id, "upsert")
-    session.commit()  # commit begin_step antes de iniciar operações longas
+    session.commit()
 
+    # Colunas do staging (snake_case), excluindo metadados do ETL
     result = session.execute(
         text(
-            "SELECT column_name "
-            "FROM information_schema.columns "
-            "WHERE table_name = :table_name "
-            "  AND table_schema = 'etl' "
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = :table_name AND table_schema = 'etl' "
             "ORDER BY ordinal_position"
         ),
         {"table_name": STAGING_TABLE},
     )
-    all_columns = [row[0] for row in result if row[0] not in ("etl_job_id", "loaded_at")]
+    staging_cols = [row[0] for row in result if row[0] not in ("etl_job_id", "loaded_at")]
 
-    if not all_columns:
+    if not staging_cols:
         raise RuntimeError(f"No columns found in staging table '{STAGING_TABLE}'")
 
-    conflict_columns = [col for col in CONFLICT_COLUMNS if col in all_columns]
-    if not conflict_columns:
-        raise RuntimeError("No conflict columns found in staging schema for UPSERT")
+    # Mapeamento snake_case → UPPERCASE (colunas do projetinho_pai)
+    crm_cols = [STAGING_TO_CRM_COLUMN_MAP.get(c, c.upper()) for c in staging_cols]
 
-    update_columns = [col for col in all_columns if col not in conflict_columns]
-    set_clause = ", ".join(f"{col} = EXCLUDED.{col}" for col in update_columns)
-    columns_sql = ", ".join(all_columns)
-    conflict_sql = ", ".join(conflict_columns)
-    conflict_target = f"({conflict_sql})"
-    if CONFLICT_WHERE:
-        conflict_target = f"{conflict_target} WHERE {CONFLICT_WHERE}"
-
-    # Materializa a source deduplicada em tabela temporária.
-    # Tabelas temporárias sobrevivem a COMMITs dentro da mesma sessão —
-    # cada operação subsequente tem sua própria transação curta.
+    # Cria tabela temporária deduplicada: 1 linha por CNPJ, DATA_BASE mais recente
+    staging_cols_sql = ", ".join(staging_cols)
     session.execute(text("DROP TABLE IF EXISTS _upsert_source"))
     session.execute(
         text(f"""
             CREATE TEMP TABLE _upsert_source AS
-            SELECT {columns_sql}
+            SELECT {staging_cols_sql}
             FROM (
-                SELECT
-                    {columns_sql},
-                    ROW_NUMBER() OVER (
-                        PARTITION BY cd_cpf_cnpj_cliente
-                        ORDER BY data_base DESC NULLS LAST
-                    ) AS __rn
-                FROM {STAGING_TABLE}
+                SELECT {staging_cols_sql},
+                       ROW_NUMBER() OVER (
+                           PARTITION BY cd_cpf_cnpj_cliente
+                           ORDER BY data_base DESC NULLS LAST
+                       ) AS __rn
+                FROM etl.{STAGING_TABLE}
                 WHERE etl_job_id = :job_id
-            ) ranked_source
+            ) ranked
             WHERE __rn = 1
         """),
         {"job_id": job_id},
     )
     session.execute(text("CREATE INDEX ON _upsert_source (cd_cpf_cnpj_cliente)"))
-    session.commit()  # commit após criar e indexar a temp table
+    session.commit()
 
-    source_select_sql = "SELECT * FROM _upsert_source"
+    # Modo historico_only: insere direto em historico sem tocar em projetinho_pai
+    if historico_only:
+        _insert_historico_only(session, staging_cols, crm_cols, job_id)
+        _prune_historico(session)
+        mark_step_done(session, job_id, "upsert")
+        return
 
-    incoming_is_newer = (
-        f"COALESCE(EXCLUDED.data_base, '') >= COALESCE({FINAL_TABLE}.data_base, '')"
-        if "data_base" in all_columns
-        else None
+    # Arquiva DATA_BASE atual de projetinho_pai → historico ANTES do upsert
+    # (preserva snapshot do estado anterior, igual ao pipeline.js)
+    existing = session.execute(
+        text(f'SELECT DISTINCT "DATA_BASE" FROM {PROJETINHO_PAI} WHERE "DATA_BASE" IS NOT NULL')
+    ).fetchall()
+    for (old_db,) in existing:
+        logger.info("Arquivando projetinho_pai DATA_BASE=%s → historico", old_db)
+        session.execute(
+            text("SELECT arquivar_por_data_base(:data_base, :data_ref)"),
+            {"data_base": old_db, "data_ref": old_db},
+        )
+    if existing:
+        session.commit()
+        logger.info("Arquivamento concluido: %d DATA_BASE(s) → historico", len(existing))
+
+    # UPSERT: INSERT ... ON CONFLICT (CD_CPF_CNPJ_CLIENTE) DO UPDATE
+    # Mantém o id original de cada cliente — lead_atribuicoes continua válido
+    cols_insert = ", ".join(f'"{c}"' for c in crm_cols)
+    cols_select = ", ".join(staging_cols)
+    update_set = ", ".join(
+        f'"{c}" = EXCLUDED."{c}"'
+        for c in crm_cols
+        if c != "CD_CPF_CNPJ_CLIENTE"
     )
-    source_is_newer = (
-        "COALESCE(s.data_base, '') >= COALESCE(f.data_base, '')"
-        if "data_base" in all_columns
-        else None
+    result = session.execute(
+        text(f"""
+            INSERT INTO {PROJETINHO_PAI} ({cols_insert})
+            SELECT {cols_select}
+            FROM _upsert_source
+            WHERE cd_cpf_cnpj_cliente IS NOT NULL
+            ON CONFLICT ("CD_CPF_CNPJ_CLIENTE") DO UPDATE SET {update_set}
+        """)
     )
-    history_columns = [col for col in update_columns if col != "data_base"]
+    session.commit()
+    logger.info("Upsert: %d registros em %s (IDs preservados)", result.rowcount, PROJETINHO_PAI)
 
-    _insert_change_history(
-        session,
-        job_id=job_id,
-        source_select_sql=source_select_sql,
-        history_columns=history_columns,
-        source_is_newer_sql=source_is_newer,
-    )
-    session.commit()  # commit após history inserts
-
-    if update_columns:
-        upsert_sql = f"""
-            INSERT INTO {FINAL_TABLE} ({columns_sql})
-            SELECT {columns_sql} FROM _upsert_source
-            ON CONFLICT {conflict_target} DO UPDATE SET {set_clause}
-            {f"WHERE {incoming_is_newer}" if incoming_is_newer else ""}
-        """
-    else:
-        upsert_sql = f"""
-            INSERT INTO {FINAL_TABLE} ({columns_sql})
-            SELECT {columns_sql} FROM _upsert_source
-            ON CONFLICT {conflict_target} DO NOTHING
-        """
-
-    session.execute(text(upsert_sql))
-    session.commit()  # commit após upsert final
+    _prune_historico(session)
 
     mark_step_done(session, job_id, "upsert")
+
+
+def _insert_historico_only(
+    session: Session,
+    staging_cols: list[str],
+    crm_cols: list[str],
+    job_id: str,
+) -> None:
+    """Insere dados da staging direto em historico, usando DATA_BASE como DATA_REFERENCIA."""
+    cols_insert = ", ".join(f'"{c}"' for c in crm_cols) + ', "DATA_REFERENCIA"'
+    cols_select = ", ".join(staging_cols) + ", data_base"
+    result = session.execute(
+        text(f"""
+            INSERT INTO historico ({cols_insert})
+            SELECT {cols_select}
+            FROM _upsert_source
+            WHERE cd_cpf_cnpj_cliente IS NOT NULL
+        """)
+    )
+    session.commit()
+    logger.info(
+        "historico_only: inseridos %d registros em historico (DATA_REFERENCIA=DATA_BASE)",
+        result.rowcount,
+    )
+
+
+def _prune_historico(session: Session) -> None:
+    """Remove datas mais antigas do historico, mantendo apenas HISTORICO_MAX_DATES datas distintas."""
+    max_dates = get_settings().HISTORICO_MAX_DATES
+    rows = session.execute(
+        text(
+            'SELECT DISTINCT "DATA_REFERENCIA" FROM historico '
+            'WHERE "DATA_REFERENCIA" IS NOT NULL '
+            'ORDER BY "DATA_REFERENCIA" DESC'
+        )
+    ).fetchall()
+
+    dates = [r[0] for r in rows]
+    if len(dates) <= max_dates:
+        logger.info("Historico com %d data(s) — dentro do limite de %d.", len(dates), max_dates)
+        return
+
+    to_delete = dates[max_dates:]
+    logger.info("Podando historico: removendo %d data(s) antiga(s): %s", len(to_delete), to_delete)
+    for date in to_delete:
+        session.execute(
+            text('DELETE FROM historico WHERE "DATA_REFERENCIA" = :d'),
+            {"d": date},
+        )
+    session.commit()
+    logger.info("Historico agora tem %d data(s).", max_dates)

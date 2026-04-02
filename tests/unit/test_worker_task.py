@@ -2,22 +2,30 @@ from unittest.mock import MagicMock, patch
 
 
 def test_run_etl_marks_job_done_on_success():
-    with patch("worker.tasks.get_db_session") as mock_db, patch("worker.tasks.run_extract") as mock_extract, patch(
-        "worker.tasks.run_validate"
-    ) as mock_validate, patch("worker.tasks.run_clean") as mock_clean, patch("worker.tasks.run_enrich") as mock_enrich, patch(
-        "worker.tasks.run_stage"
-    ) as mock_stage, patch("worker.tasks.run_upsert") as mock_upsert, patch(
-        "worker.tasks_cnpj.run_cnpj_verify_async"
-    ) as mock_cnpj_verify:
+    with patch("worker.tasks.get_db_session") as mock_db, \
+         patch("worker.tasks.run_extract") as mock_extract, \
+         patch("worker.tasks.run_validate") as mock_validate, \
+         patch("worker.tasks.run_clean") as mock_clean, \
+         patch("worker.tasks.run_enrich") as mock_enrich, \
+         patch("worker.tasks.run_stage") as mock_stage, \
+         patch("worker.tasks.run_upsert") as mock_upsert:
         mock_session = MagicMock()
         mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
         from shared.models import EtlFile, EtlJobRun
 
-        mock_job = EtlJobRun(id="job-1", file_id="file-1", status="QUEUED", triggered_by="scheduler", max_retries=3)
+        mock_job = EtlJobRun(id="job-1", file_id="file-1", status="QUEUED", triggered_by="scheduler", max_retries=3, historico_only=False)
         mock_file = EtlFile(id="file-1", minio_path="2026/02/27/f.xlsx", hash_sha256="h", file_date=None)
-        mock_session.query().filter_by().first.side_effect = [mock_job, mock_file]
+
+        # query(EtlJobRun).filter_by → job; query(EtlFile).filter_by → file
+        def _query_side_effect(model):
+            q = MagicMock()
+            q.filter_by.return_value.first.return_value = mock_job if model.__name__ == "EtlJobRun" else mock_file
+            q.filter.return_value.with_for_update.return_value.first.return_value = None
+            return q
+
+        mock_session.query.side_effect = _query_side_effect
 
         from worker.tasks import run_etl
 
@@ -30,7 +38,6 @@ def test_run_etl_marks_job_done_on_success():
         mock_enrich.assert_called_once()
         mock_stage.assert_called_once()
         mock_upsert.assert_called_once()
-        mock_cnpj_verify.apply_async.assert_called_once()
 
 
 def test_exponential_backoff_delays():
@@ -42,24 +49,30 @@ def test_exponential_backoff_delays():
 
 
 def test_run_etl_rolls_back_session_before_marking_failure():
-    with patch("worker.tasks.get_db_session") as mock_db, patch("worker.tasks.run_extract") as mock_extract, patch(
-        "worker.tasks.run_clean"
-    ) as mock_clean, patch("worker.tasks.run_enrich") as mock_enrich, patch(
-        "worker.tasks.run_validate"
-    ) as mock_validate, patch("worker.tasks.run_stage") as mock_stage, patch(
-        "worker.tasks.run_upsert", side_effect=RuntimeError("upsert failed")
-    ), patch(
-        "worker.tasks_cnpj.run_cnpj_verify_async"
-    ), patch("worker.tasks.mark_step_failed") as mock_mark_step_failed:
+    with patch("worker.tasks.get_db_session") as mock_db, \
+         patch("worker.tasks.run_extract") as mock_extract, \
+         patch("worker.tasks.run_clean") as mock_clean, \
+         patch("worker.tasks.run_enrich") as mock_enrich, \
+         patch("worker.tasks.run_validate") as mock_validate, \
+         patch("worker.tasks.run_stage") as mock_stage, \
+         patch("worker.tasks.run_upsert", side_effect=RuntimeError("upsert failed")), \
+         patch("worker.tasks.mark_step_failed") as mock_mark_step_failed:
         mock_session = MagicMock()
         mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
         from shared.models import EtlFile, EtlJobRun
 
-        mock_job = EtlJobRun(id="job-1", file_id="file-1", status="QUEUED", triggered_by="scheduler", max_retries=3)
+        mock_job = EtlJobRun(id="job-1", file_id="file-1", status="QUEUED", triggered_by="scheduler", max_retries=3, historico_only=False)
         mock_file = EtlFile(id="file-1", minio_path="2026/02/27/f.xlsx", hash_sha256="h", file_date=None)
-        mock_session.query().filter_by().first.side_effect = [mock_job, mock_file]
+
+        def _query_side_effect(model):
+            q = MagicMock()
+            q.filter_by.return_value.first.return_value = mock_job if model.__name__ == "EtlJobRun" else mock_file
+            q.filter.return_value.with_for_update.return_value.first.return_value = None
+            return q
+
+        mock_session.query.side_effect = _query_side_effect
 
         from worker.tasks import run_etl
 

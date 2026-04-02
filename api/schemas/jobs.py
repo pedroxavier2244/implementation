@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 class JobRunRequest(BaseModel):
     file_id: str
+    historico_only: bool = False
 
 
 class JobRunResponse(BaseModel):

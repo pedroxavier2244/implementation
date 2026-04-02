@@ -28,7 +28,7 @@ def run_job(request: JobRunRequest):
 
     task = enqueue_task(
         "worker.tasks.run_etl",
-        kwargs={"job_id": None, "file_id": request.file_id},
+        kwargs={"job_id": None, "file_id": request.file_id, "historico_only": request.historico_only},
         queue="etl_jobs",
     )
     return JobRunResponse(job_id=task.id, status="QUEUED")

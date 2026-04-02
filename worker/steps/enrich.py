@@ -487,10 +487,28 @@ def _compute_gap_columns(dataframe) -> None:
         is_max | (faixa_global >= faixa_alvo_num), 0,
         np.maximum(target_global - current_global, 0),
     )
+    tpv_m0 = _coerce_numeric(dataframe["tpv_m0"]).fillna(0)
+    tpv_m1 = _coerce_numeric(dataframe["tpv_m1"]).fillna(0)
     tpv_m2 = _coerce_numeric(dataframe["tpv_m2"]).fillna(0)
+    # Melhor mês do ciclo — evita subestimar o nível do cliente (issue #3)
+    best_tpv = pd.concat([tpv_m0, tpv_m1, tpv_m2], axis=1).max(axis=1).fillna(0)
+
+    # Recalcula faixa_domicilio usando o melhor mês; preserva o valor mais alto
+    # (Excel pode ter calculado com M0 apenas, gerando nível subestimado)
+    recomputed_faixa_dom = pd.Series(
+        np.select(
+            [best_tpv >= 25000, best_tpv >= 18000, best_tpv >= 12000, best_tpv >= 5000],
+            [4, 3, 2, 1],
+            default=0,
+        ),
+        index=dataframe.index,
+        dtype=float,
+    )
+    faixa_domicilio = faixa_domicilio.combine(recomputed_faixa_dom, max)
+
     dataframe["gap_domicilio"] = np.where(
         is_max | (faixa_domicilio >= faixa_alvo_num), 0,
-        np.maximum(target_domicilio - tpv_m2, 0),
+        np.maximum(target_domicilio - best_tpv, 0),
     )
 
     def _progress(gap, target):
@@ -559,13 +577,13 @@ def _compute_status_qualificacao(dataframe) -> None:
             (ja_pago > 0) & (previsao == 0) & (faixa_alvo != "MAX"),
         ],
         [
-            "Nunca qualificou.",
-            "Primeira qualificação.",
-            "Qualificação recorrente.",
-            "Topo atingido.",
-            "Perdeu qualificação.",
+            "Status: A\nDescricao: Nunca qualificou - cliente nunca recebeu comissao e nao ha nenhuma prevista.",
+            "Status: B\nDescricao: Primeira qualificacao - cliente ainda nao recebeu comissao, mas ha uma prevista.",
+            "Status: C\nDescricao: Qualificacao recorrente - cliente ja recebeu comissoes anteriores e tem uma nova prevista.",
+            "Status: D\nDescricao: Topo atingido - cliente ja recebeu comissoes e atingiu a faixa maxima.",
+            "Status: E\nDescricao: Perdeu qualificacao - cliente ja recebeu comissoes, mas nao ha nova prevista e nao atingiu o nivel maximo.",
         ],
-        default="Não classificado.",
+        default="Status: -\nDescricao: Nao classificado.",
     )
 
 

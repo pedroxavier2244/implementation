@@ -53,6 +53,7 @@ class EtlJobRun(Base):
     max_retries = Column(Integer, default=3)
     last_retry_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
+    historico_only = Column(Boolean, default=False)
 
     file = relationship("EtlFile", back_populates="jobs")
     steps = relationship("EtlJobStep", back_populates="job")

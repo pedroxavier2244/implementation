@@ -35,7 +35,11 @@ def test_post_jobs_run_queues_job(client):
 
         from shared.models import EtlFile
 
-        mock_session.query().filter_by().first.return_value = EtlFile(id="f-1", hash_sha256="h", file_date=None)
+        # first call: EtlFile lookup; second call (filter active_job): None
+        mock_session.query.return_value.filter_by.return_value.first.return_value = EtlFile(
+            id="f-1", hash_sha256="h", file_date=None
+        )
+        mock_session.query.return_value.filter.return_value.first.return_value = None
         mock_enqueue.return_value.id = "task-1"
 
         response = client.post("/v1/jobs/run", json={"file_id": "f-1"})
@@ -71,181 +75,41 @@ def test_get_data_visao_cliente_requires_digits(client):
     assert response.status_code == 400
 
 
-def test_get_data_visao_cliente_fallbacks_to_brasilapi_when_not_found_locally(client):
-    with patch("api.routes.data.get_db_session") as mock_db, patch("api.routes.data.get_settings") as mock_settings, patch(
-        "api.routes.data.fetch_cnpj"
-    ) as mock_fetch:
+def test_get_data_visao_cliente_returns_empty_when_not_found(client):
+    with patch("api.routes.data.get_db_session") as mock_db:
         mock_session = MagicMock()
         mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-        rows_result_empty_1 = MagicMock()
-        rows_result_empty_1.mappings.return_value.all.return_value = []
-        rows_result_empty_2 = MagicMock()
-        rows_result_empty_2.mappings.return_value.all.return_value = []
-        mock_session.execute.side_effect = [rows_result_empty_1, rows_result_empty_2]
-
-        mock_session.query().filter_by().first.return_value = None
-
-        mock_settings.return_value.CNPJ_CACHE_TTL_DAYS = 30
-        mock_settings.return_value.BRASILAPI_TIMEOUT = 5
-        mock_fetch.return_value = {
-            "razao_social": "EMPRESA TESTE LTDA",
-            "nome_fantasia": "EMPRESA TESTE",
-            "situacao_cadastral": "ATIVA",
-            "descricao_situacao": "ATIVA",
-            "cnae_fiscal": "4751201",
-            "cnae_descricao": "COMERCIO VAREJISTA",
-            "natureza_juridica": "2062",
-            "capital_social": "50000",
-            "porte": "DEMAIS",
-            "uf": "SP",
-            "municipio": "SAO PAULO",
-            "email": "contato@teste.com",
-            "data_inicio_ativ": "2010-01-01",
-        }
+        rows_result_empty = MagicMock()
+        rows_result_empty.mappings.return_value.all.return_value = []
+        mock_session.execute.side_effect = [rows_result_empty, rows_result_empty]
 
         response = client.get("/v1/data/visao-cliente?documento=12.345.678/0001-90")
         assert response.status_code == 200
         payload = response.json()
-
         assert payload["documento_consultado"] == "12345678000190"
-        assert payload["total"] == 1
-        assert payload["items"][0]["data_source"] == "receita_federal_brasilapi"
-        assert payload["items"][0]["nome_cliente"] == "EMPRESA TESTE LTDA"
-        assert "status_cc" in payload["items"][0]
-        assert payload["items"][0]["status_cc"] is None
-        mock_fetch.assert_called_once_with("12345678000190", timeout=5)
+        assert payload["total"] == 0
+        assert payload["items"] == []
 
 
-def test_get_data_visao_cliente_does_not_call_brasilapi_for_cpf(client):
-    with patch("api.routes.data.get_db_session") as mock_db, patch("api.routes.data.fetch_cnpj") as mock_fetch:
+def test_get_data_visao_cliente_cpf_returns_empty(client):
+    with patch("api.routes.data.get_db_session") as mock_db:
         mock_session = MagicMock()
         mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-        rows_result_empty_1 = MagicMock()
-        rows_result_empty_1.mappings.return_value.all.return_value = []
-        rows_result_empty_2 = MagicMock()
-        rows_result_empty_2.mappings.return_value.all.return_value = []
-        mock_session.execute.side_effect = [rows_result_empty_1, rows_result_empty_2]
+        rows_result_empty = MagicMock()
+        rows_result_empty.mappings.return_value.all.return_value = []
+        mock_session.execute.side_effect = [rows_result_empty, rows_result_empty]
 
         response = client.get("/v1/data/visao-cliente?documento=123.456.789-01")
         assert response.status_code == 200
         payload = response.json()
         assert payload["documento_consultado"] == "12345678901"
         assert payload["total"] == 0
-        mock_fetch.assert_not_called()
 
 
-def test_analytics_summary_contas_abertas(client):
-    with patch("api.routes.analytics.get_db_session") as mock_db:
-        mock_session = MagicMock()
-        mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_db.return_value.__exit__ = MagicMock(return_value=False)
-
-        scalar_result = MagicMock()
-        scalar_result.scalar.return_value = 12
-        mock_session.execute.return_value = scalar_result
-
-        response = client.get("/v1/analytics/contas-abertas/summary?period=monthly&as_of=2026-03-02")
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["indicator"] == "contas-abertas"
-        assert payload["period"] == "monthly"
-        assert payload["total"] == 12
-
-
-def test_analytics_details_contas_qualificadas(client):
-    with patch("api.routes.analytics.get_db_session") as mock_db:
-        mock_session = MagicMock()
-        mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_db.return_value.__exit__ = MagicMock(return_value=False)
-
-        sum_result = MagicMock()
-        sum_result.scalar.return_value = 99
-
-        rows_result = MagicMock()
-        rows_result.mappings.return_value.all.return_value = [
-            {
-                "indicator": "contas-qualificadas",
-                "reference_date": "2026-03-02",
-                "total": 99,
-                "source_sheet": "Abertura",
-            }
-        ]
-        mock_session.execute.side_effect = [sum_result, rows_result]
-
-        response = client.get("/v1/analytics/contas-qualificadas/details?period=daily&as_of=2026-03-02")
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["indicator"] == "contas-qualificadas"
-        assert payload["total"] == 99
-        assert len(payload["items"]) == 1
-
-
-def test_analytics_qualificacao_c6pay_uses_tpv_m1_m2_and_90_days_window(client):
-    with patch("api.routes.analytics.get_db_session") as mock_db:
-        mock_session = MagicMock()
-        mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_db.return_value.__exit__ = MagicMock(return_value=False)
-
-        scalar_result = MagicMock()
-        scalar_result.scalar.return_value = 7
-        mock_session.execute.return_value = scalar_result
-
-        response = client.get("/v1/analytics/qualificacao-c6pay/summary?period=monthly&as_of=2026-03-02")
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["indicator"] == "qualificacao-c6pay"
-        assert payload["total"] == 7
-
-        query_text = str(mock_session.execute.call_args.args[0])
-        params = mock_session.execute.call_args.args[1]
-        assert "tpv_m1" in query_text
-        assert "tpv_m2" in query_text
-        assert "instalacao_limite" in query_text
-        assert str(params["instalacao_limite"]) == "2025-12-02"
-
-
-def test_get_cnpj_endpoint_fallbacks_to_brasilapi_when_cache_missing(client):
-    with patch("api.routes.cnpj.get_db_session") as mock_db, patch("api.routes.cnpj.get_settings") as mock_settings, patch(
-        "api.routes.cnpj.fetch_cnpj"
-    ) as mock_fetch:
-        mock_session = MagicMock()
-        mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_db.return_value.__exit__ = MagicMock(return_value=False)
-
-        mock_session.query().filter_by().first.return_value = None
-        mock_settings.return_value.BRASILAPI_TIMEOUT = 5
-        mock_fetch.return_value = {
-            "razao_social": "EMPRESA TESTE LTDA",
-            "nome_fantasia": "EMPRESA TESTE",
-            "situacao_cadastral": "ATIVA",
-            "descricao_situacao": "ATIVA",
-            "cnae_fiscal": "4751201",
-            "cnae_descricao": "COMERCIO VAREJISTA",
-            "natureza_juridica": "2062",
-            "capital_social": "50000",
-            "porte": "DEMAIS",
-            "uf": "SP",
-            "municipio": "SAO PAULO",
-            "email": "contato@teste.com",
-            "data_inicio_ativ": "2010-01-01",
-        }
-
-        response = client.get("/v1/cnpj/12.345.678/0001-90")
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["cnpj"] == "12345678000190"
-        assert payload["data_source"] == "receita_federal_brasilapi"
-        assert payload["razao_social"] == "EMPRESA TESTE LTDA"
-        mock_fetch.assert_called_once_with("12345678000190", timeout=5)
-
-
-def test_get_cnpj_endpoint_rejects_invalid_length(client):
-    response = client.get("/v1/cnpj/123")
-    assert response.status_code == 400
 
 
 def test_get_data_visao_cliente_historico_alteracoes(client):

@@ -7,8 +7,8 @@ from worker.steps.clean import _normalize_data_base, _normalize_document
 
 
 def test_conflict_key_is_cliente_only():
-    assert UPSERT_CONFLICT_COLUMNS == ("cd_cpf_cnpj_cliente",)
-    assert UPSERT_CONFLICT_WHERE == "cd_cpf_cnpj_cliente IS NOT NULL"
+    assert UPSERT_CONFLICT_COLUMNS == ("CD_CPF_CNPJ_CLIENTE",)
+    assert '"CD_CPF_CNPJ_CLIENTE" IS NOT NULL' in UPSERT_CONFLICT_WHERE
 
 
 def test_required_columns_include_model_fields():
@@ -34,46 +34,36 @@ def test_normalize_data_base_to_canonical_timestamp():
 
 
 def test_upsert_sql_uses_latest_data_base_per_cliente():
+    """Temp table deve deduplicar por CNPJ usando DATA_BASE mais recente."""
     session = MagicMock()
+    # schema query, DROP TEMP, CREATE TEMP, CREATE INDEX, existing DATA_BASE query, INSERT projetinho_pai
     session.execute.side_effect = [
         [("data_base",), ("cd_cpf_cnpj_cliente",), ("nome_cliente",)],
+        None,  # DROP TABLE IF EXISTS _upsert_source
         None,  # CREATE TEMP TABLE _upsert_source
         None,  # CREATE INDEX ON _upsert_source
-        None,  # INSERT change_history new rows
-        None,  # INSERT change_history update rows
-        None,  # main upsert
+        MagicMock(fetchall=MagicMock(return_value=[])),  # SELECT DISTINCT DATA_BASE
+        MagicMock(rowcount=3),  # INSERT INTO projetinho_pai
     ]
 
     with patch("worker.steps.upsert.is_step_done", return_value=False), patch(
         "worker.steps.upsert.begin_step"
-    ), patch("worker.steps.upsert.mark_step_done") as mock_mark_done:
+    ), patch("worker.steps.upsert.mark_step_done") as mock_mark_done, patch(
+        "worker.steps.upsert._prune_historico"
+    ):
         from worker.steps.upsert import run_upsert
-
         run_upsert(session, "job-1")
 
-    assert session.execute.call_count == 6
-
-    # CREATE TEMP TABLE deve conter ROW_NUMBER e receber job_id como param
-    create_temp_sql = str(session.execute.call_args_list[1].args[0])
+    # CREATE TEMP TABLE deve usar ROW_NUMBER particionado por CNPJ
+    create_temp_sql = str(session.execute.call_args_list[2].args[0])
     assert "ROW_NUMBER() OVER" in create_temp_sql
     assert "PARTITION BY cd_cpf_cnpj_cliente" in create_temp_sql
     assert "ORDER BY data_base DESC NULLS LAST" in create_temp_sql
-    params_temp = session.execute.call_args_list[1].args[1]
-    assert params_temp["job_id"] == "job-1"
 
-    insert_new_sql = str(session.execute.call_args_list[3].args[0])
-    assert "visao_cliente_change_history" in insert_new_sql
-    assert "'INSERT'" in insert_new_sql
-
-    insert_updates_sql = str(session.execute.call_args_list[4].args[0])
-    assert "jsonb_build_object" in insert_updates_sql
-    assert "visao_cliente_change_history" in insert_updates_sql
-    assert "jsonb_object_keys" in insert_updates_sql
-
-    sql_text = str(session.execute.call_args_list[5].args[0])
-    assert "ON CONFLICT (cd_cpf_cnpj_cliente) WHERE cd_cpf_cnpj_cliente IS NOT NULL" in sql_text
-    assert "COALESCE(EXCLUDED.data_base, '') >= COALESCE(final_visao_cliente.data_base, '')" in sql_text
-    assert "_upsert_source" in sql_text
+    # INSERT final deve ir para projetinho_pai
+    insert_sql = str(session.execute.call_args_list[5].args[0])
+    assert "projetinho_pai" in insert_sql
+    assert "_upsert_source" in insert_sql
 
     mock_mark_done.assert_called_once()
 
@@ -83,22 +73,21 @@ def test_upsert_does_not_backfill_levels():
     session = MagicMock()
     session.execute.side_effect = [
         [("data_base",), ("cd_cpf_cnpj_cliente",), ("nome_cliente",)],
+        None,  # DROP TEMP
         None,  # CREATE TEMP TABLE _upsert_source
         None,  # CREATE INDEX ON _upsert_source
-        None,  # INSERT change_history new rows
-        None,  # INSERT change_history update rows
-        None,  # main upsert
+        MagicMock(fetchall=MagicMock(return_value=[])),  # SELECT DISTINCT DATA_BASE
+        MagicMock(rowcount=0),  # INSERT INTO projetinho_pai
     ]
 
     with patch("worker.steps.upsert.is_step_done", return_value=False), patch(
         "worker.steps.upsert.begin_step"
-    ), patch("worker.steps.upsert.mark_step_done"):
+    ), patch("worker.steps.upsert.mark_step_done"), patch(
+        "worker.steps.upsert._prune_historico"
+    ):
         from worker.steps.upsert import run_upsert
-
         run_upsert(session, "job-level")
 
-    # 6 chamadas: schema query + CREATE TEMP + CREATE INDEX + change_history (insert) + change_history (update) + upsert
-    assert session.execute.call_count == 6
     for call in session.execute.call_args_list:
         sql = str(call.args[0])
         assert "nivel_cartao" not in sql
