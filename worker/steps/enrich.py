@@ -500,7 +500,9 @@ def _compute_gap_columns(dataframe) -> None:
     pct_spending = _progress(dataframe["gap_spending"], target_spending)
     pct_saldo = _progress(dataframe["gap_saldo_medio"], target_saldo)
     pct_global = _progress(dataframe["gap_conta_global"], target_global)
+    pct_domicilio = _progress(dataframe["gap_domicilio"], target_domicilio)
 
+    dataframe["pct_domicilio"] = pct_domicilio
     dataframe["pct_cash_in"] = pct_cash
     dataframe["pct_spending"] = pct_spending
     dataframe["pct_saldo_medio"] = pct_saldo
@@ -512,13 +514,14 @@ def _compute_gap_columns(dataframe) -> None:
             "SPENDING": np.where(pct_spending < 1, pct_spending, 0),
             "SALDO_MEDIO": np.where(pct_saldo < 1, pct_saldo, 0),
             "CONTA_GLOBAL": np.where(pct_global < 1, pct_global, 0),
+            "DOMICILIO": np.where(pct_domicilio < 1, pct_domicilio, 0),
         }
     )
     dataframe["maior_progresso_pct"] = np.where(is_max, 1, pct_frame.max(axis=1))
 
     pct_row_max = pct_frame.max(axis=1)
     criterio = np.full(len(pct_frame), "CASH_IN", dtype=object)
-    for name in reversed(["CASH_IN", "SPENDING", "SALDO_MEDIO", "CONTA_GLOBAL"]):
+    for name in reversed(["CASH_IN", "SPENDING", "SALDO_MEDIO", "CONTA_GLOBAL", "DOMICILIO"]):
         criterio[pct_frame[name].values == pct_row_max.values] = name
     criterio[is_max.values] = "MAX"
     dataframe["criterio_proximo"] = criterio
@@ -556,13 +559,13 @@ def _compute_status_qualificacao(dataframe) -> None:
             (ja_pago > 0) & (previsao == 0) & (faixa_alvo != "MAX"),
         ],
         [
-            "Status: A\nDescrição: Nunca qualificou — cliente nunca recebeu comissão e não há nenhuma prevista.",
-            "Status: B\nDescrição: Primeira qualificação — cliente ainda não recebeu comissão, mas há uma prevista.",
-            "Status: C\nDescrição: Qualificação recorrente — cliente já recebeu comissões anteriores e tem uma nova prevista.",
-            "Status: D\nDescrição: Topo atingido — cliente já recebeu comissões e atingiu a faixa máxima.",
-            "Status: E\nDescrição: Perdeu qualificação — cliente já recebeu comissões, mas não há nova prevista e não atingiu o nível máximo.",
+            "Nunca qualificou.",
+            "Primeira qualificação.",
+            "Qualificação recorrente.",
+            "Topo atingido.",
+            "Perdeu qualificação.",
         ],
-        default="Status: -\nDescrição: Não classificado.",
+        default="Não classificado.",
     )
 
 

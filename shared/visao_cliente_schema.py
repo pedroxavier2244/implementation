@@ -7,7 +7,7 @@ FINAL_TABLE_NAME = "final_visao_cliente"
 UPSERT_CONFLICT_COLUMNS = ("cd_cpf_cnpj_cliente",)
 UPSERT_CONFLICT_WHERE = "cd_cpf_cnpj_cliente IS NOT NULL"
 
-# Exatamente 108 colunas — espelho fiel da planilha MODELO (RELATORIO.FORMULASS).
+# Exatamente 109 colunas — espelho fiel da planilha MODELO (RELATORIO.FORMULASS).
 # Ordem e nomes normalizados via normalize_column_name().
 # Qualquer divergência aqui quebra o pipeline: não adicionar, não remover.
 REQUIRED_COLUMNS = [
@@ -114,6 +114,7 @@ REQUIRED_COLUMNS = [
     "gap_saldo_medio",          # GAP_SALDO_MEDIO
     "gap_conta_global",         # GAP_CONTA_GLOBAL
     "gap_domicilio",            # GAP_DOMICILIO
+    "pct_domicilio",            # %_DOMICILIO
     "pct_cash_in",              # %_CASH_IN
     "pct_spending",             # %_SPENDING
     "pct_saldo_medio",          # %_SALDO_MEDIO
