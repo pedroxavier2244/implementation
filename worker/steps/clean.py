@@ -69,6 +69,24 @@ def run_clean(session: Session, job_id: str) -> None:
     if "data_base" in dataframe.columns:
         dataframe["data_base"] = dataframe["data_base"].map(_normalize_data_base)
 
+    # Filtra: apenas PJ + LIBERADA + MES_REF_COMISS preenchido
+    before = len(dataframe)
+    if "tipo_pessoa" in dataframe.columns:
+        dataframe = dataframe[dataframe["tipo_pessoa"].str.strip().str.upper() == "PJ"]
+    if "status_cc" in dataframe.columns:
+        dataframe = dataframe[dataframe["status_cc"].str.strip().str.upper() == "LIBERADA"]
+    if "mes_ref_comiss" in dataframe.columns:
+        dataframe = dataframe[
+            dataframe["mes_ref_comiss"].notna()
+            & (dataframe["mes_ref_comiss"].astype(str).str.strip() != "")
+            & (dataframe["mes_ref_comiss"].astype(str).str.lower() != "nan")
+        ]
+    import logging
+    logging.getLogger(__name__).info(
+        "Filtro PJ+LIBERADA+MES_REF_COMISS: %d → %d linhas", before, len(dataframe)
+    )
+    dataframe = dataframe.reset_index(drop=True)
+
     set_cached_dataframe(job_id, dataframe)
 
     mark_step_done(session, job_id, "clean")

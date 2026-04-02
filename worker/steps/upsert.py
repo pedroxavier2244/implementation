@@ -55,10 +55,6 @@ def run_upsert(session: Session, job_id: str, historico_only: bool = False) -> N
                        ) AS __rn
                 FROM etl.{STAGING_TABLE}
                 WHERE etl_job_id = :job_id
-                  AND UPPER(TRIM(tipo_pessoa)) = 'PJ'
-                  AND UPPER(TRIM(status_cc)) = 'LIBERADA'
-                  AND mes_ref_comiss IS NOT NULL
-                  AND TRIM(mes_ref_comiss) <> ''
             ) ranked
             WHERE __rn = 1
         """),
