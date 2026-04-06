@@ -169,6 +169,7 @@ def run_etl(self, job_id: str | None, file_id: str | None, historico_only: bool 
                 job.status = "DEAD"
                 job.error_message = str(exc)
                 job.finished_at = datetime.now(timezone.utc)
+                session.commit()  # persiste DEAD + step FAILED antes de sair
                 clear_cached_dataframe(job_id)
                 logger.critical(
                     "Job morreu após %d tentativas no step %s: %s",
@@ -181,4 +182,6 @@ def run_etl(self, job_id: str | None, file_id: str | None, historico_only: bool 
 
             job.status = "RETRYING"
             delay = compute_retry_delay(retry_count)
+            session.commit()  # persiste RETRYING + step FAILED — self.retry() levanta exceção
+                               # que faria o context manager dar rollback em tudo
             raise self.retry(exc=exc, countdown=delay)

@@ -182,6 +182,9 @@ def run_assign_leads(session: Session, job_id: str) -> None:
             }
         )
 
+    # Fallback: CNPJs novos em projetinho_pai sem atribuição e sem carteira → usa NOME_CONSULTOR
+    insert_rows = _fallback_by_nome_consultor(session, job_id, insert_rows, usuario_norm_map, lider_map)
+
     if not insert_rows:
         logger.info("Nenhum lead novo para atribuir", extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_done"})
         return
@@ -211,3 +214,74 @@ def run_assign_leads(session: Session, job_id: str) -> None:
         skipped,
         extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_done"},
     )
+
+
+def _fallback_by_nome_consultor(
+    session: Session,
+    job_id: str,
+    existing_rows: list[dict],
+    usuario_norm_map: dict[str, str],
+    lider_map: dict[str, str | None],
+) -> list[dict]:
+    """Complementa insert_rows com CNPJs que estão em projetinho_pai mas não têm
+    atribuição em lead_atribuicoes nem foram encontrados na carteira.
+
+    Usa NOME_CONSULTOR de projetinho_pai como fonte para fuzzy match de usuario.
+    """
+    # lead_ids já cobertos pela carteira
+    covered_lead_ids = {r["lead_id"] for r in existing_rows}
+
+    # Busca todos os leads sem atribuição
+    unassigned = session.execute(
+        text("""
+            SELECT pp.id, pp."NOME_CONSULTOR"
+            FROM public.projetinho_pai pp
+            WHERE NOT EXISTS (
+                SELECT 1 FROM public.lead_atribuicoes la WHERE la.lead_id = pp.id
+            )
+            AND pp."NOME_CONSULTOR" IS NOT NULL
+            AND pp."NOME_CONSULTOR" <> ''
+        """)
+    ).fetchall()
+
+    if not unassigned:
+        return existing_rows
+
+    logger.info(
+        "Fallback NOME_CONSULTOR: %d leads sem atribuição para processar",
+        len(unassigned),
+        extra={"job_id": job_id, "step": "assign_leads", "event": "assign_fallback_start"},
+    )
+
+    fallback_rows = []
+    unmatched: set[str] = set()
+    for lead_id, nome_consultor in unassigned:
+        if lead_id in covered_lead_ids:
+            continue
+        uid = _match_name(nome_consultor, usuario_norm_map)
+        if uid is None:
+            unmatched.add(nome_consultor)
+            continue
+        lid = lider_map.get(uid)
+        fallback_rows.append({
+            "lead_id": lead_id,
+            "consultor_id": uid,
+            "lider_id": lid,
+            "atribuido_por": lid,
+        })
+
+    if unmatched:
+        logger.warning(
+            "Fallback: %d NOME_CONSULTOR sem match em usuarios (ignorados): %s",
+            len(unmatched),
+            sorted(unmatched)[:20],
+            extra={"job_id": job_id, "step": "assign_leads", "event": "assign_fallback_unmatched"},
+        )
+
+    logger.info(
+        "Fallback NOME_CONSULTOR: %d atribuições adicionais geradas",
+        len(fallback_rows),
+        extra={"job_id": job_id, "step": "assign_leads", "event": "assign_fallback_done"},
+    )
+
+    return existing_rows + fallback_rows

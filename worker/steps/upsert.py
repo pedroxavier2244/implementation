@@ -69,20 +69,51 @@ def run_upsert(session: Session, job_id: str, historico_only: bool = False) -> N
         mark_step_done(session, job_id, "upsert")
         return
 
+    # Cria backup de projetinho_pai antes de qualquer alteração — permite rollback rápido
+    from datetime import date as _date
+    backup_table = f"projetinho_pai_backup_{_date.today().strftime('%Y%m%d')}"
+    session.execute(text(f"DROP TABLE IF EXISTS public.{backup_table}"))
+    session.execute(text(f"CREATE TABLE public.{backup_table} AS SELECT * FROM {PROJETINHO_PAI}"))
+    session.commit()
+    logger.info("Backup criado: %s", backup_table,
+                extra={"job_id": job_id, "step": "upsert", "event": "backup_created",
+                       "backup_table": backup_table})
+
     # Arquiva DATA_BASE atual de projetinho_pai → historico ANTES do upsert
     # (preserva snapshot do estado anterior, igual ao pipeline.js)
+    # IMPORTANTE: arquivamos SEM deletar de projetinho_pai para que o upsert
+    # possa usar ON CONFLICT e preservar os IDs originais dos leads.
     existing = session.execute(
         text(f'SELECT DISTINCT "DATA_BASE" FROM {PROJETINHO_PAI} WHERE "DATA_BASE" IS NOT NULL')
     ).fetchall()
-    for (old_db,) in existing:
-        logger.info("Arquivando projetinho_pai DATA_BASE=%s → historico", old_db, extra={"job_id": job_id, "step": "upsert", "event": "archive_data_base"})
-        session.execute(
-            text("SELECT arquivar_por_data_base(:data_base, :data_ref)"),
-            {"data_base": old_db, "data_ref": old_db},
-        )
     if existing:
+        # Obtém a lista de colunas de projetinho_pai (excluindo id, igual à função SQL)
+        col_rows = session.execute(
+            text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'projetinho_pai'
+                  AND column_name != 'id'
+                ORDER BY ordinal_position
+            """)
+        ).fetchall()
+        col_list = ", ".join(f'"{r[0]}"' for r in col_rows)
+
+        for (old_db,) in existing:
+            logger.info("Arquivando projetinho_pai DATA_BASE=%s → historico", old_db,
+                        extra={"job_id": job_id, "step": "upsert", "event": "archive_data_base"})
+            # Copia para historico sem deletar (preserva IDs para o upsert a seguir)
+            session.execute(
+                text(f"""
+                    INSERT INTO historico ({col_list}, "DATA_REFERENCIA")
+                    SELECT {col_list}, "DATA_BASE"
+                    FROM {PROJETINHO_PAI}
+                    WHERE "DATA_BASE" = :data_base
+                """),
+                {"data_base": old_db},
+            )
         session.commit()
-        logger.info("Arquivamento concluido: %d DATA_BASE(s) → historico", len(existing), extra={"job_id": job_id, "step": "upsert", "event": "archive_done"})
+        logger.info("Arquivamento concluido: %d DATA_BASE(s) → historico", len(existing),
+                    extra={"job_id": job_id, "step": "upsert", "event": "archive_done"})
 
     # UPSERT: INSERT ... ON CONFLICT (CD_CPF_CNPJ_CLIENTE) DO UPDATE
     # Mantém o id original de cada cliente — lead_atribuicoes continua válido
@@ -104,6 +135,23 @@ def run_upsert(session: Session, job_id: str, historico_only: bool = False) -> N
     )
     session.commit()
     logger.info("Upsert: %d registros em %s (IDs preservados)", result.rowcount, PROJETINHO_PAI, extra={"job_id": job_id, "step": "upsert", "event": "upsert_done"})
+
+    # Remove de projetinho_pai os CNPJs que não estão no arquivo novo.
+    # Esses clientes saíram da carteira — seus dados já foram arquivados em historico acima.
+    removed = session.execute(
+        text(f"""
+            DELETE FROM {PROJETINHO_PAI}
+            WHERE "CD_CPF_CNPJ_CLIENTE" NOT IN (
+                SELECT cd_cpf_cnpj_cliente FROM _upsert_source
+                WHERE cd_cpf_cnpj_cliente IS NOT NULL
+            )
+        """)
+    )
+    if removed.rowcount:
+        logger.info("Removidos %d registros de %s (nao presentes no arquivo novo)",
+                    removed.rowcount, PROJETINHO_PAI,
+                    extra={"job_id": job_id, "step": "upsert", "event": "removed_stale"})
+    session.commit()
 
     _prune_historico(session)
 
@@ -189,16 +237,26 @@ def _prune_historico(session: Session) -> None:
         # Garante que a partição mensal existe
         _ensure_arquivo_partition(session, date)
 
-        # Move para historico_arquivo
+        # Move para historico_arquivo — data_ref_date calculada no Python (evita
+        # DatetimeFieldOverflow quando DATA_REFERENCIA está em formato YYYY-MM-DD ou timestamp)
+        from datetime import datetime as _dt
+        data_ref_date = None
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
+            try:
+                data_ref_date = _dt.strptime(str(date).strip()[:19], fmt).date()
+                break
+            except ValueError:
+                continue
+
         result = session.execute(
             text("""
                 INSERT INTO public.historico_arquivo
-                SELECT *, TO_DATE("DATA_REFERENCIA", 'DD/MM/YYYY') AS data_ref_date
+                SELECT *, :data_ref_date AS data_ref_date
                 FROM public.historico
                 WHERE "DATA_REFERENCIA" = :d
                 ON CONFLICT DO NOTHING
             """),
-            {"d": date},
+            {"d": date, "data_ref_date": data_ref_date},
         )
         archived = result.rowcount
 
