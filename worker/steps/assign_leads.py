@@ -1,5 +1,4 @@
 import io
-import logging
 import unicodedata
 from difflib import SequenceMatcher
 
@@ -8,9 +7,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from shared.config import get_settings
+from shared.logging_config import get_logger
 from shared.minio_client import MinioClient
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _norm(name: str) -> str:
@@ -68,18 +68,18 @@ def run_assign_leads(session: Session, job_id: str) -> None:
     settings = get_settings()
     carteira_key = settings.CARTEIRA_MINIO_KEY
     if not carteira_key:
-        logger.info("CARTEIRA_MINIO_KEY não configurado, pulando atribuição de leads")
+        logger.info("CARTEIRA_MINIO_KEY não configurado, pulando atribuição de leads", extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_skip"})
         return
 
     # Baixa carteira do MinIO
     try:
         minio = MinioClient()
         if not minio.object_exists(carteira_key):
-            logger.warning("Carteira não encontrada no MinIO (%s) — pulando atribuição de leads", carteira_key)
+            logger.warning("Carteira não encontrada no MinIO (%s) — pulando atribuição de leads", carteira_key, extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_warning"})
             return
         file_bytes = minio.download_file(carteira_key)
     except Exception as exc:
-        logger.warning("Erro ao baixar carteira do MinIO (%s): %s — pulando atribuição de leads", carteira_key, exc)
+        logger.warning("Erro ao baixar carteira do MinIO (%s): %s — pulando atribuição de leads", carteira_key, exc, extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_warning"})
         return
 
     # Carrega xlsx
@@ -87,7 +87,7 @@ def run_assign_leads(session: Session, job_id: str) -> None:
     df.columns = [str(c).strip() for c in df.columns]
 
     if "CD_CPF_CNPJ_CLIENTE" not in df.columns or "Relacionamento" not in df.columns:
-        logger.error("Carteira xlsx não tem colunas esperadas (CD_CPF_CNPJ_CLIENTE, Relacionamento) — pulando")
+        logger.error("Carteira xlsx não tem colunas esperadas (CD_CPF_CNPJ_CLIENTE, Relacionamento) — pulando", extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_warning"})
         return
 
     # Normaliza CNPJ: remove sufixo '.0' de leitura float, mantém só dígitos
@@ -111,6 +111,7 @@ def run_assign_leads(session: Session, job_id: str) -> None:
         "Carteira carregada: %d CNPJs únicos, %d consultores únicos",
         len(cnpj_to_consultor),
         len(set(cnpj_to_consultor.values())),
+        extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_loaded"},
     )
 
     if not cnpj_to_consultor:
@@ -141,8 +142,9 @@ def run_assign_leads(session: Session, job_id: str) -> None:
         logger.warning(
             "Consultores da carteira sem match em usuarios (ignorados): %s",
             sorted(unmatched),
+            extra={"job_id": job_id, "step": "assign_leads", "event": "assign_unmatched"},
         )
-    logger.info("Assignments a processar: %d", len(assignments))
+    logger.info("Assignments a processar: %d", len(assignments), extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_matched"})
 
     if not assignments:
         return
@@ -162,6 +164,7 @@ def run_assign_leads(session: Session, job_id: str) -> None:
         "CNPJs encontrados em projetinho_pai: %d / %d",
         len(cnpj_to_lead_id),
         len(cnpj_list),
+        extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_lookup"},
     )
 
     # Monta linhas a inserir
@@ -180,7 +183,7 @@ def run_assign_leads(session: Session, job_id: str) -> None:
         )
 
     if not insert_rows:
-        logger.info("Nenhum lead novo para atribuir")
+        logger.info("Nenhum lead novo para atribuir", extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_done"})
         return
 
     # Insere em batches de 500: ON CONFLICT (lead_id) DO NOTHING preserva atribuições existentes
@@ -206,4 +209,5 @@ def run_assign_leads(session: Session, job_id: str) -> None:
         "Lead assignments: %d inseridos, %d já existiam (preservados)",
         inserted_total,
         skipped,
+        extra={"job_id": job_id, "step": "assign_leads", "event": "assign_leads_done"},
     )

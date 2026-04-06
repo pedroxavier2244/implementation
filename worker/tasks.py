@@ -1,8 +1,9 @@
-import logging
 import uuid
 from datetime import datetime, timezone
 
-logger = logging.getLogger(__name__)
+from shared.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 from sqlalchemy import text
 
@@ -48,10 +49,9 @@ def run_etl(self, job_id: str | None, file_id: str | None, historico_only: bool 
             )
             if already_running:
                 logger.warning(
-                    "Job already active (%s) for file %s (%s), skipping duplicate task",
-                    already_running.status,
-                    file_id,
-                    already_running.id,
+                    "Job já ativo para o arquivo, ignorando duplicata",
+                    extra={"job_id": already_running.id, "file_id": file_id,
+                           "event": "job_duplicate_skipped", "status": already_running.status},
                 )
                 return
 
@@ -113,6 +113,12 @@ def run_etl(self, job_id: str | None, file_id: str | None, historico_only: bool 
             job.finished_at = datetime.now(timezone.utc)
             etl_file.is_processed = True
             session.commit()
+            logger.info(
+                "Job concluído com sucesso",
+                extra={"job_id": job_id, "file_id": file_id, "event": "job_done",
+                       "rows_total": job.rows_total, "rows_ok": job.rows_ok,
+                       "rows_bad": job.rows_bad, "historico_only": bool(job.historico_only)},
+            )
 
             # Cleanup runs after commit — non-critical, best-effort
             try:
@@ -143,7 +149,10 @@ def run_etl(self, job_id: str | None, file_id: str | None, historico_only: bool 
                 )
                 session.commit()
             except Exception as cleanup_exc:
-                logger.warning("Non-critical cleanup failed for job %s: %s", job_id, cleanup_exc)
+                logger.warning(
+                    "Cleanup não-crítico falhou: %s", cleanup_exc,
+                    extra={"job_id": job_id, "event": "cleanup_failed"},
+                )
                 session.rollback()
             finally:
                 clear_cached_dataframe(job_id)
@@ -162,8 +171,11 @@ def run_etl(self, job_id: str | None, file_id: str | None, historico_only: bool 
                 job.finished_at = datetime.now(timezone.utc)
                 clear_cached_dataframe(job_id)
                 logger.critical(
-                    "Job %s DEAD after %d retries at step %s: %s",
-                    job_id, retry_count, current_step, exc,
+                    "Job morreu após %d tentativas no step %s: %s",
+                    retry_count, current_step, exc,
+                    extra={"job_id": job_id, "step": current_step, "event": "job_dead",
+                           "retry_count": retry_count},
+                    exc_info=True,
                 )
                 return
 

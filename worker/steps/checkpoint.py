@@ -2,7 +2,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from shared.logging_config import get_logger
 from shared.models import EtlJobStep
+
+_log = get_logger(__name__)
 
 
 def is_step_done(session: Session, job_id: str, step_name: str) -> bool:
@@ -11,6 +14,7 @@ def is_step_done(session: Session, job_id: str, step_name: str) -> bool:
 
 
 def begin_step(session: Session, job_id: str, step_name: str) -> EtlJobStep:
+    _log.info("Iniciando step", extra={"job_id": job_id, "step": step_name, "event": "step_start"})
     step = session.query(EtlJobStep).filter_by(job_id=job_id, step_name=step_name).first()
     now = datetime.now(timezone.utc)
     if step is None:
@@ -37,6 +41,7 @@ def mark_step_done(session: Session, job_id: str, step_name: str) -> None:
     step.status = "DONE"
     step.finished_at = datetime.now(timezone.utc)
     session.flush()
+    _log.info("Step concluído", extra={"job_id": job_id, "step": step_name, "event": "step_done"})
 
 
 def mark_step_failed(session: Session, job_id: str, step_name: str, error: str) -> None:
@@ -47,3 +52,7 @@ def mark_step_failed(session: Session, job_id: str, step_name: str, error: str) 
     step.finished_at = datetime.now(timezone.utc)
     step.error_message = error
     session.flush()
+    _log.error(
+        "Step falhou: %s", error,
+        extra={"job_id": job_id, "step": step_name, "event": "step_failed"},
+    )

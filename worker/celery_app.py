@@ -20,6 +20,9 @@ except ModuleNotFoundError:
     crontab = None  # type: ignore[assignment]
 
 from shared.config import get_settings
+from shared.logging_config import setup_logging
+
+setup_logging()
 
 settings = get_settings()
 
@@ -52,4 +55,6 @@ app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     beat_schedule=_beat_schedule,
+    worker_hijack_root_logger=False,
+    worker_log_color=False,
 )

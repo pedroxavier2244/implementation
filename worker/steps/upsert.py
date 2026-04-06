@@ -1,9 +1,8 @@
-import logging
-
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from shared.config import get_settings
+from shared.logging_config import get_logger
 from shared.visao_cliente_schema import (
     FINAL_TABLE_NAME,
     STAGING_TABLE_NAME,
@@ -11,7 +10,7 @@ from shared.visao_cliente_schema import (
 )
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 STAGING_TABLE = STAGING_TABLE_NAME
 PROJETINHO_PAI = FINAL_TABLE_NAME  # public.projetinho_pai
@@ -76,14 +75,14 @@ def run_upsert(session: Session, job_id: str, historico_only: bool = False) -> N
         text(f'SELECT DISTINCT "DATA_BASE" FROM {PROJETINHO_PAI} WHERE "DATA_BASE" IS NOT NULL')
     ).fetchall()
     for (old_db,) in existing:
-        logger.info("Arquivando projetinho_pai DATA_BASE=%s → historico", old_db)
+        logger.info("Arquivando projetinho_pai DATA_BASE=%s → historico", old_db, extra={"job_id": job_id, "step": "upsert", "event": "archive_data_base"})
         session.execute(
             text("SELECT arquivar_por_data_base(:data_base, :data_ref)"),
             {"data_base": old_db, "data_ref": old_db},
         )
     if existing:
         session.commit()
-        logger.info("Arquivamento concluido: %d DATA_BASE(s) → historico", len(existing))
+        logger.info("Arquivamento concluido: %d DATA_BASE(s) → historico", len(existing), extra={"job_id": job_id, "step": "upsert", "event": "archive_done"})
 
     # UPSERT: INSERT ... ON CONFLICT (CD_CPF_CNPJ_CLIENTE) DO UPDATE
     # Mantém o id original de cada cliente — lead_atribuicoes continua válido
@@ -104,7 +103,7 @@ def run_upsert(session: Session, job_id: str, historico_only: bool = False) -> N
         """)
     )
     session.commit()
-    logger.info("Upsert: %d registros em %s (IDs preservados)", result.rowcount, PROJETINHO_PAI)
+    logger.info("Upsert: %d registros em %s (IDs preservados)", result.rowcount, PROJETINHO_PAI, extra={"job_id": job_id, "step": "upsert", "event": "upsert_done"})
 
     _prune_historico(session)
 
@@ -132,6 +131,7 @@ def _insert_historico_only(
     logger.info(
         "historico_only: inseridos %d registros em historico (DATA_REFERENCIA=DATA_BASE)",
         result.rowcount,
+        extra={"job_id": job_id, "step": "upsert", "event": "upsert_done"},
     )
 
 
@@ -147,7 +147,7 @@ def _ensure_arquivo_partition(session: Session, data_ref_str: str) -> None:
         except ValueError:
             continue
     else:
-        logger.warning("DATA_REFERENCIA com formato desconhecido: %s — partição não criada", data_ref_str)
+        logger.warning("DATA_REFERENCIA com formato desconhecido: %s — partição não criada", data_ref_str, extra={"step": "upsert", "event": "partition_format_error"})
         return
 
     year, month = d.year, d.month
@@ -179,11 +179,11 @@ def _prune_historico(session: Session) -> None:
 
     dates = [r[0] for r in rows]
     if len(dates) <= max_dates:
-        logger.info("Historico com %d data(s) — dentro do limite de %d.", len(dates), max_dates)
+        logger.info("Historico com %d data(s) — dentro do limite de %d.", len(dates), max_dates, extra={"step": "upsert", "event": "prune_skip"})
         return
 
     to_archive = dates[max_dates:]
-    logger.info("Arquivando %d data(s) antiga(s) → historico_arquivo: %s", len(to_archive), to_archive)
+    logger.info("Arquivando %d data(s) antiga(s) → historico_arquivo: %s", len(to_archive), to_archive, extra={"step": "upsert", "event": "prune_archive"})
 
     for date in to_archive:
         # Garante que a partição mensal existe
@@ -207,7 +207,7 @@ def _prune_historico(session: Session) -> None:
             text('DELETE FROM historico WHERE "DATA_REFERENCIA" = :d'),
             {"d": date},
         )
-        logger.info("DATA_REFERENCIA=%s: %d linha(s) movidas para historico_arquivo", date, archived)
+        logger.info("DATA_REFERENCIA=%s: %d linha(s) movidas para historico_arquivo", date, archived, extra={"step": "upsert", "event": "prune_moved"})
 
     session.commit()
-    logger.info("Historico ativo agora tem %d data(s). Arquivo total preservado.", max_dates)
+    logger.info("Historico ativo agora tem %d data(s). Arquivo total preservado.", max_dates, extra={"step": "upsert", "event": "prune_done"})

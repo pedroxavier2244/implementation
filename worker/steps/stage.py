@@ -3,9 +3,12 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from shared.logging_config import get_logger
 from shared.visao_cliente_schema import STAGING_TABLE_NAME
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 from worker.steps.extract import get_cached_dataframe
+
+logger = get_logger(__name__)
 
 STAGING_TABLE = STAGING_TABLE_NAME
 
@@ -50,3 +53,7 @@ def run_stage(session: Session, job_id: str) -> None:
             conn.commit()
 
     mark_step_done(session, job_id, "stage")
+    logger.info(
+        "Stage done",
+        extra={"job_id": job_id, "step": "stage", "event": "stage_done", "rows": len(df_to_insert)},
+    )

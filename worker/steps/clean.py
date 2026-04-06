@@ -4,9 +4,12 @@ import pandas as pd
 
 from sqlalchemy.orm import Session
 
+from shared.logging_config import get_logger
 from shared.visao_cliente_schema import normalize_column_name
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 from worker.steps.extract import get_cached_dataframe, set_cached_dataframe
+
+logger = get_logger(__name__)
 
 
 def _normalize_document(value) -> str | None:
@@ -37,6 +40,7 @@ def run_clean(session: Session, job_id: str) -> None:
     if is_step_done(session, job_id, "clean"):
         return
     begin_step(session, job_id, "clean")
+    logger.info("Starting clean", extra={"job_id": job_id, "step": "clean", "event": "clean_start"})
 
     dataframe = get_cached_dataframe(job_id)
     if dataframe is None:
@@ -81,12 +85,16 @@ def run_clean(session: Session, job_id: str) -> None:
             & (dataframe["mes_ref_comiss"].astype(str).str.strip() != "")
             & (dataframe["mes_ref_comiss"].astype(str).str.lower() != "nan")
         ]
-    import logging
-    logging.getLogger(__name__).info(
-        "Filtro PJ+LIBERADA+MES_REF_COMISS: %d → %d linhas", before, len(dataframe)
+    logger.info(
+        "Filtro PJ+LIBERADA+MES_REF_COMISS: %d → %d linhas", before, len(dataframe),
+        extra={"job_id": job_id, "step": "clean", "event": "filter_applied", "rows": len(dataframe)},
     )
     dataframe = dataframe.reset_index(drop=True)
 
     set_cached_dataframe(job_id, dataframe)
 
     mark_step_done(session, job_id, "clean")
+    logger.info(
+        "Clean done",
+        extra={"job_id": job_id, "step": "clean", "event": "clean_done", "rows": len(dataframe)},
+    )

@@ -5,9 +5,12 @@ import unicodedata
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from shared.logging_config import get_logger
 from shared.minio_client import MinioClient
 from shared.visao_cliente_schema import SOURCE_SHEET_NAME
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
+
+logger = get_logger(__name__)
 
 _cache_lock = threading.Lock()
 _dataframe_cache: dict[str, object] = {}
@@ -62,27 +65,39 @@ def run_extract(session: Session, job_id: str, etl_file) -> None:
     if is_step_done(session, job_id, "extract"):
         return
     begin_step(session, job_id, "extract")
+    logger.info("Starting extract", extra={"job_id": job_id, "step": "extract", "event": "extract_start"})
 
-    minio = MinioClient()
-    file_bytes = minio.download_file(etl_file.minio_path)
-    workbook = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
+    try:
+        minio = MinioClient()
+        file_bytes = minio.download_file(etl_file.minio_path)
+        workbook = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
 
-    sheet_name = _resolve_sheet_name(
-        workbook,
-        [
-            SOURCE_SHEET_NAME,
-            "Visao Cliente",
-            "Visao_Cliente",
-            "VisaoCliente",
-            "Dados",
-        ],
-    )
-    if sheet_name is None:
-        available = ", ".join(workbook.keys())
-        raise ValueError(f"Sheet 'Visao Cliente' not found. Available sheets: {available}")
+        sheet_name = _resolve_sheet_name(
+            workbook,
+            [
+                SOURCE_SHEET_NAME,
+                "Visao Cliente",
+                "Visao_Cliente",
+                "VisaoCliente",
+                "Dados",
+            ],
+        )
+        if sheet_name is None:
+            available = ", ".join(workbook.keys())
+            raise ValueError(f"Sheet 'Visao Cliente' not found. Available sheets: {available}")
 
-    dataframe = workbook[sheet_name]
-    set_cached_workbook(job_id, workbook)
-    set_cached_dataframe(job_id, dataframe)
+        dataframe = workbook[sheet_name]
+        set_cached_workbook(job_id, workbook)
+        set_cached_dataframe(job_id, dataframe)
 
-    mark_step_done(session, job_id, "extract")
+        mark_step_done(session, job_id, "extract")
+        logger.info(
+            "Extract done",
+            extra={"job_id": job_id, "step": "extract", "event": "extract_done", "rows": len(dataframe)},
+        )
+    except Exception:
+        logger.exception(
+            "Extract error",
+            extra={"job_id": job_id, "step": "extract", "event": "extract_error"},
+        )
+        raise

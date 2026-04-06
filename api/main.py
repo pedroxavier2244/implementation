@@ -1,6 +1,9 @@
 import logging
 
 from fastapi import FastAPI
+from shared.logging_config import setup_logging
+
+setup_logging()
 from fastapi.responses import JSONResponse
 import redis as redis_lib
 

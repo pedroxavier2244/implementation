@@ -1,14 +1,13 @@
-import logging
-
 import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from shared.logging_config import get_logger
 from shared.visao_cliente_schema import REQUIRED_COLUMNS
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 from worker.steps.extract import get_cached_dataframe, set_cached_dataframe
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +594,7 @@ def run_enrich(session: Session, job_id: str) -> None:
     if is_step_done(session, job_id, "enrich"):
         return
     begin_step(session, job_id, "enrich")
+    logger.info("Starting enrich", extra={"job_id": job_id, "step": "enrich", "event": "enrich_start"})
 
     # Suppress numpy overflow warnings — overflows are handled as NaN via _coerce_numeric
     np.seterr(over="ignore", invalid="ignore")
@@ -624,3 +624,4 @@ def run_enrich(session: Session, job_id: str) -> None:
     set_cached_dataframe(job_id, dataframe)
 
     mark_step_done(session, job_id, "enrich")
+    logger.info("Enrich done", extra={"job_id": job_id, "step": "enrich", "event": "enrich_done"})

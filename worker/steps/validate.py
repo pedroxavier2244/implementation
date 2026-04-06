@@ -3,10 +3,13 @@ import uuid
 from sqlalchemy.orm import Session
 
 from shared.config import get_settings
+from shared.logging_config import get_logger
 from shared.models import EtlBadRow, EtlJobRun
 from shared.visao_cliente_schema import REQUIRED_COLUMNS, normalize_column_name
 from worker.steps.checkpoint import begin_step, is_step_done, mark_step_done
 from worker.steps.extract import get_cached_dataframe
+
+logger = get_logger(__name__)
 
 def _missing_required_columns(columns: list[str]) -> list[str]:
     if not REQUIRED_COLUMNS:
@@ -65,3 +68,13 @@ def run_validate(session: Session, job_id: str, etl_file) -> None:
         )
 
     mark_step_done(session, job_id, "validate")
+    logger.info(
+        "Validate done",
+        extra={
+            "job_id": job_id,
+            "step": "validate",
+            "event": "validate_done",
+            "rows_ok": total - bad_count,
+            "rows_bad": bad_count,
+        },
+    )
