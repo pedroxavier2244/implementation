@@ -88,5 +88,5 @@ def upload_file(file: UploadFile = File(...)):
 
 @router.post("/sync")
 def sync_file():
-    task = enqueue_task("checker.checker.run_daily", queue="etl_jobs")
+    task = enqueue_task("worker.integrations.gdrive.run_daily", queue="etl_jobs")
     return {"task_id": task.id, "status": "QUEUED"}

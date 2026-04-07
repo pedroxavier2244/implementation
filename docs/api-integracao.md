@@ -1,5 +1,10 @@
 # Guia de Integracao da API
 
+> Status: legacy
+> Last reviewed against code: 2026-03-26
+> Este guia descreve um contrato historico mais amplo que o wiring atual da aplicacao. Use [../AI-START-HERE.md](../AI-START-HERE.md) e [guia-integracao-etl.md](guia-integracao-etl.md) como entrada principal antes de consultar este arquivo.
+
+
 Este guia explica para que serve cada endpoint, os parametros aceitos, e exemplos completos de request e response.
 
 **Ultima atualizacao:** 2026-03-06
@@ -20,17 +25,17 @@ Este guia explica para que serve cada endpoint, os parametros aceitos, e exemplo
 ## Fluxo recomendado de integracao
 
 ```
-1. POST /v1/files/sync          — baixar arquivo mais recente automaticamente
+1. POST /v1/files/sync          â€” baixar arquivo mais recente automaticamente
       OU
-   POST /v1/files/upload         — enviar arquivo manualmente
+   POST /v1/files/upload         â€” enviar arquivo manualmente
 
-2. GET  /v1/files?limit=1        — obter o file_id do arquivo recem registrado
+2. GET  /v1/files?limit=1        â€” obter o file_id do arquivo recem registrado
 
-3. POST /v1/jobs/run             — iniciar o ETL com o file_id
+3. POST /v1/jobs/run             â€” iniciar o ETL com o file_id
 
-4. GET  /v1/jobs/{job_id}        — acompanhar ate status = "DONE" (ou "DEAD")
+4. GET  /v1/jobs/{job_id}        â€” acompanhar ate status = "DONE" (ou "DEAD")
 
-5. GET  /v1/data/visao-cliente?documento=<cnpj>   — consultar dados do cliente
+5. GET  /v1/data/visao-cliente?documento=<cnpj>   â€” consultar dados do cliente
 ```
 
 ---
@@ -81,8 +86,8 @@ GET /ready
 Lista arquivos registrados no sistema.
 
 **Query params:**
-- `limit` — maximo de itens (padrao `20`, max `100`)
-- `offset` — paginacao (padrao `0`)
+- `limit` â€” maximo de itens (padrao `20`, max `100`)
+- `offset` â€” paginacao (padrao `0`)
 
 **Request:**
 ```http
@@ -386,10 +391,10 @@ GET /v1/jobs/1084d82c-173c-4577-8a01-bf46e6700622
 Consulta o dado mais recente de um CPF/CNPJ na base consolidada.
 
 **Query params:**
-- `documento` (obrigatorio) — CPF ou CNPJ, com ou sem pontuacao
+- `documento` (obrigatorio) â€” CPF ou CNPJ, com ou sem pontuacao
 - `limit` (padrao `1`, max `500`)
 - `offset` (padrao `0`)
-- `fallback_rf` (padrao `true`) — se nao achar no banco e for CNPJ, consulta Receita Federal
+- `fallback_rf` (padrao `true`) â€” se nao achar no banco e for CNPJ, consulta Receita Federal
 
 **Request:**
 ```http
@@ -476,7 +481,7 @@ GET /v1/data/visao-cliente?documento=75.011.470/0010-4&limit=1&offset=0
 Retorna a linha do tempo completa de snapshots de um CPF/CNPJ, mostrando o diff entre cada relatorio.
 
 **Query params:**
-- `documento` (obrigatorio) — CPF ou CNPJ, com ou sem pontuacao
+- `documento` (obrigatorio) â€” CPF ou CNPJ, com ou sem pontuacao
 - `limit` (padrao `50`, max `500`)
 - `offset` (padrao `0`)
 
@@ -667,7 +672,7 @@ GET /v1/analytics/contas-abertas/details?period=monthly&as_of=2026-02-21&limit=2
 Consulta dados da Receita Federal por CNPJ, via cache local ou BrasilAPI em tempo real.
 
 **Query params:**
-- `fallback_live` (padrao `true`) — se nao houver cache, consulta BrasilAPI
+- `fallback_live` (padrao `true`) â€” se nao houver cache, consulta BrasilAPI
 
 **Request:**
 ```http
@@ -697,8 +702,8 @@ GET /v1/cnpj/12345678000190?fallback_live=true
 ```
 
 **`data_source` possiveis:**
-- `"cache"` — retornado do cache local (verificado nos ultimos 30 dias)
-- `"receita_federal_brasilapi"` — consultado em tempo real na BrasilAPI agora
+- `"cache"` â€” retornado do cache local (verificado nos ultimos 30 dias)
+- `"receita_federal_brasilapi"` â€” consultado em tempo real na BrasilAPI agora
 
 **Response 400:**
 ```json
@@ -717,8 +722,8 @@ GET /v1/cnpj/12345678000190?fallback_live=true
 Lista CNPJs onde os dados do C6 Bank divergem dos dados da Receita Federal, detectados automaticamente no step `cnpj_verify`.
 
 **Query params:**
-- `cnpj` (opcional) — filtrar por CNPJ especifico
-- `campo` (opcional) — filtrar por campo especifico (ex: `razao_social`, `situacao_cadastral`)
+- `cnpj` (opcional) â€” filtrar por CNPJ especifico
+- `campo` (opcional) â€” filtrar por campo especifico (ex: `razao_social`, `situacao_cadastral`)
 - `limit` (padrao `50`, max `500`)
 - `offset` (padrao `0`)
 
@@ -890,7 +895,7 @@ const resultados = await Promise.all(
 
 ## Notas operacionais
 
-- **Sem autenticacao** no estado atual — proteger com firewall ou proxy reverso em producao
+- **Sem autenticacao** no estado atual â€” proteger com firewall ou proxy reverso em producao
 - A rota raiz `GET /` nao existe; use `/docs`, `/health` ou `/ready`
 - O Swagger em `/docs` permite testar todos os endpoints interativamente sem precisar de curl
 - O ETL nao altera o arquivo original na fonte; apenas le, processa e grava no banco

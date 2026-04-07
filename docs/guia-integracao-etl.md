@@ -1,5 +1,11 @@
 # Guia de Integracao do ETL
 
+> Status: current
+> Last validated against code: 2026-03-26
+> Leia primeiro: [../AI-START-HERE.md](../AI-START-HERE.md)
+> Nota: o wiring atual validado no api.main cobre as rotas files, jobs e data. Secoes antigas sobre CNPJ e fallback RF devem ser tratadas com cautela e validadas no codigo atual.
+
+
 ## 1. Objetivo
 
 Este documento orienta quem precisa consumir a API HTTP do `etl-system`, seja para operar carga manualmente, consultar dados consolidados ou integrar o pipeline com outros sistemas.

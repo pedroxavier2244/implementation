@@ -137,7 +137,26 @@ def run_upsert(session: Session, job_id: str, historico_only: bool = False) -> N
     logger.info("Upsert: %d registros em %s (IDs preservados)", result.rowcount, PROJETINHO_PAI, extra={"job_id": job_id, "step": "upsert", "event": "upsert_done"})
 
     # Remove de projetinho_pai os CNPJs que não estão no arquivo novo.
-    # Esses clientes saíram da carteira — seus dados já foram arquivados em historico acima.
+    # IMPORTANTE: deletar lead_atribuicoes PRIMEIRO — a FK tem ON DELETE SET NULL,
+    # então deletar projetinho_pai sem isso zeraria lead_id silenciosamente.
+    stale_atrib = session.execute(
+        text(f"""
+            DELETE FROM public.lead_atribuicoes
+            WHERE lead_id IN (
+                SELECT id FROM {PROJETINHO_PAI}
+                WHERE "CD_CPF_CNPJ_CLIENTE" NOT IN (
+                    SELECT cd_cpf_cnpj_cliente FROM _upsert_source
+                    WHERE cd_cpf_cnpj_cliente IS NOT NULL
+                )
+            )
+        """)
+    )
+    if stale_atrib.rowcount:
+        logger.info("Removidos %d lead_atribuicoes de leads stale (antes de deletar projetinho_pai)",
+                    stale_atrib.rowcount,
+                    extra={"job_id": job_id, "step": "upsert", "event": "removed_stale_atrib"})
+    session.commit()
+
     removed = session.execute(
         text(f"""
             DELETE FROM {PROJETINHO_PAI}

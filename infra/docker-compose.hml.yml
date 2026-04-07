@@ -1,21 +1,4 @@
 services:
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-etl_hml}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hml_etl_2026}
-    ports:
-      - "127.0.0.1:5433:5432"   # porta 5433 no host para não colidir com prod
-    volumes:
-      - postgres_hml_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-etl_hml}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   redis:
     image: redis:7-alpine
     command: >
@@ -51,30 +34,27 @@ services:
 
   api:
     build:
-      context: .
+      context: ..
       dockerfile: api/Dockerfile
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 2
     ports:
       - "8100:8000"             # API HML em :8100
-    env_file: .env.hml
+    env_file: ../.env.hml
     depends_on:
-      postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
       minio:    { condition: service_healthy }
     restart: unless-stopped
 
   worker-etl:
     build:
-      context: .
+      context: ..
       dockerfile: worker/Dockerfile
     command: celery -A worker.celery_app worker -Q etl_jobs -c 1 --loglevel=info
-    env_file: .env.hml
+    env_file: ../.env.hml
     depends_on:
-      postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
       minio:    { condition: service_healthy }
     restart: unless-stopped
 
 volumes:
-  postgres_hml_data:
   minio_hml_data:

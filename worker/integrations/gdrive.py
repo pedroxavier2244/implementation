@@ -56,7 +56,7 @@ def _parse_date_from_filename(filename: str) -> date:
     return date.today()
 
 
-@app.task(name="checker.checker.run_daily", bind=True, queue="etl_jobs")
+@app.task(name="worker.integrations.gdrive.run_daily", bind=True, queue="etl_jobs")
 def run_daily(self):
     """
     Lists .xlsx files in the configured Google Drive folder,

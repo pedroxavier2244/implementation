@@ -1,6 +1,9 @@
 # Worktrees
 .worktrees/
 
+# Temp build/analysis artifacts
+.tmp_*/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -31,3 +34,4 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+tmp/

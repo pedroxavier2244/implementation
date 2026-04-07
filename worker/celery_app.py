@@ -30,14 +30,14 @@ app = Celery(
     "worker",
     broker=settings.celery_broker_url,
     backend=settings.REDIS_URL,
-    include=["worker.tasks", "checker.checker"],
+    include=["worker.tasks", "worker.integrations.gdrive"],
 )
 
 _beat_schedule = {}
 if crontab is not None:
     _beat_schedule = {
         "drive-sync-daily": {
-            "task": "checker.checker.run_daily",
+            "task": "worker.integrations.gdrive.run_daily",
             "schedule": crontab(
                 hour=settings.ETL_SCHEDULE_HOUR,
                 minute=settings.ETL_SCHEDULE_MINUTE,

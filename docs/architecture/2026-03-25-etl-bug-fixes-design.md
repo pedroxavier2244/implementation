@@ -9,9 +9,13 @@
 ## 1. Contexto
 
 Auditoria do sistema ETL (`c:/Users/MB NEGOCIOS/etl-system`) identificou problemas classificados em:
-- **4 críticos** — causam dados errados ou pipeline com comportamento incorreto
+- **3 críticos** — causam dados errados ou pipeline com comportamento incorreto
 - **9 altos** — riscos de crash, race conditions, endpoints inutilizáveis, dados sensíveis expostos
 - **8 médios** — qualidade de código, logging, dead code
+
+**Comparação com modelo Excel** (`relatorio enriquecido.xlsx`): 23 de 24 colunas derivadas estão corretas.
+`insight_conta_global` NÃO é bug — `.where(isna, "Possui Conta Global.")` já é correto.
+Único erro confirmado: `gap_domicilio` retorna `None` em vez de `MAX(threshold_domicilio - tpv_m2, 0)` (Excel usa AQ=TPV_M2 como variável de comparação).
 
 ---
 
@@ -36,10 +40,9 @@ Auditoria do sistema ETL (`c:/Users/MB NEGOCIOS/etl-system`) identificou problem
 
 | ID | Arquivo | Linha | Descrição | Fix |
 |----|---------|-------|-----------|-----|
-| C1 | `worker/steps/enrich.py` | ~433 | `insight_conta_global` lógica invertida: `.where(dt_global.isna(), "Possui Conta Global.")` retorna `"Possui Conta Global."` quando `dt_global` é NaN (sem conta). Semantica correta: `NaN → sem conta → string vazia`; `not NaN → com conta → "Possui Conta Global."` | Inverter a condição: usar `~dt_global.isna()` ou `.where(dt_global.notna(), ...)` |
 | C3 | `api/routes/data.py` | ~134 | Endpoint `/historico` lê de `staging_visao_cliente`, que é deletada após cada job (tasks.py linha 106). Resultado: endpoint sempre retorna vazio após o primeiro job completar | Migrar query para `etl.visao_cliente_change_history` com JOIN em `etl_file` |
 | C4 | `worker/steps/extract.py` | 10–23 | `_dataframe_cache` e `_workbook_cache` são dicts globais sem limite de tamanho e sem thread-safety. Com concorrência > 1, dois jobs podem ler/escrever no mesmo cache simultaneamente | Adicionar `threading.Lock` para acesso ao cache; ou limitar via `functools.lru_cache(maxsize=...)` |
-| C6 | `worker/steps/enrich.py` | ~507 | `gap_domicilio` é atribuído como `None` em vez de calcular `max(threshold_domicilio - faixa_domicilio, 0)` como as demais colunas `gap_*` | Implementar cálculo análogo a `gap_cash_in`, `gap_spending`, etc. |
+| C6 | `worker/steps/enrich.py` | ~507 | `gap_domicilio` é atribuído como `None` em vez de calcular `MAX(threshold_domicilio - tpv_m2, 0)`. Confirmado via Excel: a variável de comparação é `AQ=TPV_M2`, não uma coluna "domicilio" separada. | `np.maximum(target_domicilio - tpv_m2, 0)` onde `tpv_m2 = _coerce_numeric(df["tpv_m2"]).fillna(0)` |
 
 ### 3.2 Altos
 

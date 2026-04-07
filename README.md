@@ -1,66 +1,51 @@
 # ETL System
 
-Pipeline ETL para ingestao da planilha de visao cliente, consolidacao em PostgreSQL, enriquecimento de CNPJ e exposicao via API HTTP.
+Pipeline ETL para ingestao da planilha de visao cliente e consolidacao em PostgreSQL para consumo por APIs e operacao.
+
+> Status: current
+> Last validated against code: 2026-03-26
+
+## Entrada rapida para IA
+
+- [AI START HERE](AI-START-HERE.md)
+- [Indice de documentacao](docs/README.md)
 
 ## Documentacao principal
 
-Este repositorio agora possui dois guias formais, com focos diferentes:
+| Documento | Status | Uso |
+| --- | --- | --- |
+| `AI-START-HERE.md` | current | onboarding rapido para IA |
+| `docs/guia-integracao-etl.md` | current | consumo da API e operacao manual de jobs |
+| `docs/manutencao-etl.md` | current | deploy, sustentacao e troubleshooting |
+| `docs/fluxo-etl.md` | legacy | contexto historico e desenho anterior |
+| `docs/api-integracao.md` | legacy | contrato legado mais amplo que o wiring atual |
 
-- [Guia de Manutencao do ETL](docs/manutencao-etl.md)
-- [Guia de Integracao do ETL](docs/guia-integracao-etl.md)
+## Escopo atual validado no codigo
 
-## Para quem e cada documento
+- API FastAPI com rotas de `files`, `jobs` e `data`
+- health e readiness em `/health` e `/ready`
+- metricas em `/metrics` quando o instrumentador esta disponivel
+- worker ETL com orquestracao em `worker/tasks.py`
+- contrato de colunas em `shared/visao_cliente_schema.py`
+- consolidacao final em `etl.final_visao_cliente`
+- historico persistido em `etl.visao_cliente_change_history`
 
-- manutencao: operacao do pipeline, deploy, scheduler, workers, banco, MinIO, troubleshooting e release
-- integracao: consumo da API HTTP, contratos, exemplos, jobs, consulta de dados e fallback RF
+## Pipeline validado no worker atual
 
-## Escopo atual do projeto
+```text
+extract -> clean -> enrich -> validate -> stage -> upsert
+```
 
-O ETL e composto por:
+## Observacoes importantes
 
-- API FastAPI para consulta e operacao manual
-- scheduler (`checker-worker` + `beat`) para baixar o arquivo fonte e disparar jobs
-- worker ETL para executar `extract -> clean -> enrich -> validate -> stage -> upsert -> cnpj_verify`
-- notifier para alertas por Telegram, email e arquivo `.flag`
-- `local_watcher` para notificacao local no Windows
-- PostgreSQL, Redis e MinIO como base operacional
-
-## Endpoints expostos no codigo atual
-
-- `GET /health`
-- `GET /ready`
-- `GET /metrics`
-- `GET /v1/files`
-- `GET /v1/files/{file_id}`
-- `POST /v1/files/upload`
-- `POST /v1/files/sync`
-- `POST /v1/jobs/run`
-- `POST /v1/jobs/reprocess/{file_id}`
-- `GET /v1/jobs`
-- `GET /v1/jobs/{job_id}`
-- `GET /v1/data/visao-cliente`
-- `GET /v1/data/visao-cliente/historico`
-- `GET /v1/cnpj/divergencias/list`
-- `GET /v1/cnpj/{cnpj}`
-
-## Fluxo resumido
-
-1. o arquivo entra por upload manual ou sincronizacao automatica
-2. o arquivo bruto e guardado no MinIO e registrado em `etl_file`
-3. um job e enfileirado para o worker ETL
-4. o worker processa a planilha, valida, enriquece e grava `staging_visao_cliente`
-5. o upsert consolida o estado mais recente em `final_visao_cliente`
-6. a API responde consultas operacionais e historico diretamente desse banco
-
-## Ambientes e compose
-
-- `docker-compose.yml`: ambiente local enxuto para API + worker ETL
-- `docker-compose.hml.yml`: ambiente mais completo com scheduler, notifier, Prometheus e Grafana
+- `POST /v1/files/upload` grava o arquivo e cria `etl.etl_file`, mas nao inicia o ETL sozinho.
+- O drift entre docs antigas e codigo atual existe; use `AI-START-HERE.md` e `docs/README.md` antes de abrir documentos historicos.
+- Se houver conflito entre docs e codigo, trate o codigo atual como fonte principal.
 
 ## Links rapidos
 
 - [Indice de documentacao](docs/README.md)
-- [Fluxo detalhado legado](docs/fluxo-etl.md)
-- [Guia tecnico legado de integracao](docs/api-integracao.md)
+- [Guia de Integracao do ETL](docs/guia-integracao-etl.md)
+- [Guia de Manutencao do ETL](docs/manutencao-etl.md)
 - [Exemplo de ambiente local](.env.example)
 - [Exemplo de ambiente HML](.env.hml.example)

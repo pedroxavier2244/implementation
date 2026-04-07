@@ -1,5 +1,11 @@
 # Guia de Manutencao do ETL
 
+> Status: current
+> Last validated against code: 2026-03-26
+> Leia primeiro: [../AI-START-HERE.md](../AI-START-HERE.md)
+> Nota: este guia continua util para operacao, mas algumas secoes historicas citam CNPJ e analytics alem do wiring validado no api.main e no worker/tasks.py. Confirme no codigo atual antes de assumir esse comportamento.
+
+
 ## 1. Objetivo
 
 Este documento descreve como operar, publicar, diagnosticar e evoluir o `etl-system`.
@@ -182,7 +188,7 @@ As variaveis abaixo estao documentadas em [.env.example](../.env.example) e [.en
 
 ## 6. Compose e topologia de ambientes
 
-### 6.1 Ambiente local (`docker-compose.yml`)
+### 6.1 Ambiente local (`infra/docker-compose.yml`)
 
 Servicos principais:
 
@@ -198,7 +204,7 @@ Uso recomendado:
 - testes de fluxo ETL sem scheduler completo
 - validacao manual por upload e `jobs/run`
 
-### 6.2 Ambiente HML (`docker-compose.hml.yml`)
+### 6.2 Ambiente HML (`infra/docker-compose.hml.yml`)
 
 Servicos principais:
 
@@ -231,16 +237,15 @@ Uso recomendado:
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
-docker compose exec api alembic upgrade head
+docker compose -f infra/docker-compose.yml up -d --build
+docker compose -f infra/docker-compose.yml exec api alembic upgrade head
 ```
 
 ### 7.2 Subida HML
 
 ```bash
 cp .env.hml.example .env.hml
-docker compose -p etl-hml --env-file .env.hml -f docker-compose.hml.yml up -d --build
-docker compose -p etl-hml --env-file .env.hml -f docker-compose.hml.yml exec api alembic upgrade head
+bash scripts/setup-hml.sh
 ```
 
 ### 7.3 Validacoes minimas pos-subida
@@ -265,7 +270,7 @@ curl http://localhost:8100/ready
 O fluxo automatico usa:
 
 - `beat` para agendar
-- `checker.checker.run_daily` para baixar o arquivo
+- `worker.integrations.gdrive.run_daily` para baixar o arquivo do Google Drive
 - `worker.tasks.run_etl` para processar
 
 ### 8.2 Upload manual de arquivo
@@ -297,11 +302,10 @@ Checagens uteis:
 Exemplos:
 
 ```bash
-docker compose logs --tail=200 api
-docker compose logs --tail=200 worker-etl
-docker compose -p etl-hml --env-file .env.hml -f docker-compose.hml.yml logs --tail=200 checker-worker
-docker compose -p etl-hml --env-file .env.hml -f docker-compose.hml.yml logs --tail=200 beat
-docker compose -p etl-hml --env-file .env.hml -f docker-compose.hml.yml logs --tail=200 worker-notifier
+docker compose -f infra/docker-compose.yml logs --tail=200 api
+docker compose -f infra/docker-compose.yml logs --tail=200 worker-etl
+docker compose -f infra/docker-compose.hml.yml logs --tail=200 worker-etl
+docker compose -f infra/docker-compose.hml.yml logs --tail=200 worker-beat
 ```
 
 ## 9. Etapas do pipeline

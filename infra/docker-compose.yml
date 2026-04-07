@@ -51,12 +51,12 @@ services:
 
   api:
     build:
-      context: .
+      context: ..
       dockerfile: api/Dockerfile
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4
     ports:
       - "8000:8000"
-    env_file: .env
+    env_file: ../.env
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
@@ -68,10 +68,10 @@ services:
 
   worker-etl:
     build:
-      context: .
+      context: ..
       dockerfile: worker/Dockerfile
     command: celery -A worker.celery_app worker -Q etl_jobs -c 1 --loglevel=info
-    env_file: .env
+    env_file: ../.env
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
@@ -83,10 +83,10 @@ services:
 
   worker-beat:
     build:
-      context: .
+      context: ..
       dockerfile: worker/Dockerfile
     command: celery -A worker.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
-    env_file: .env
+    env_file: ../.env
     depends_on:
       redis: { condition: service_healthy }
     networks:

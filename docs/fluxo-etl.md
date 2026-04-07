@@ -1,4 +1,9 @@
-# Fluxo ETL — Visao Cliente
+# Fluxo ETL - Visao Cliente
+
+> Status: legacy
+> Last reviewed against code: 2026-03-26
+> Este documento preserva contexto historico de arquitetura. Nao use como fonte principal para o wiring atual. Leia primeiro: [../AI-START-HERE.md](../AI-START-HERE.md), [README.md](README.md) e [guia-integracao-etl.md](guia-integracao-etl.md).
+
 
 Documentacao do fluxo completo desde a entrada do arquivo ate o dado disponivel na API.
 
@@ -9,7 +14,7 @@ Documentacao do fluxo completo desde a entrada do arquivo ate o dado disponivel 
 ## Visao Geral
 
 ```
-Google Drive ──► Checker ──► MinIO ──► Worker ETL ──► PostgreSQL ──► API
+Google Drive â”€â”€â–º Checker â”€â”€â–º MinIO â”€â”€â–º Worker ETL â”€â”€â–º PostgreSQL â”€â”€â–º API
                   (agendado               (8 steps                  (consulta
                   18h SP)                 sequenciais)               por CNPJ/CPF)
 ```
@@ -20,18 +25,18 @@ Google Drive ──► Checker ──► MinIO ──► Worker ETL ──► Po
 
 O sistema aceita o arquivo de duas formas:
 
-### A) Automatica — Google Drive (producao)
+### A) Automatica â€” Google Drive (producao)
 
 O **Checker** roda todo dia as **18:00 horario de Sao Paulo** e:
 
 1. Acessa a fonte configurada em `ETL_SOURCE_API_URL`
 2. Faz o download do arquivo `.xlsx` mais recente
-3. Calcula o hash SHA-256 — se o hash ja existe no banco para aquela data, ignora (evita duplicata)
+3. Calcula o hash SHA-256 â€” se o hash ja existe no banco para aquela data, ignora (evita duplicata)
 4. Faz upload para o **MinIO** (bucket `etl-files`)
 5. Cria registro `EtlFile` no PostgreSQL com `file_date` extraido do nome do arquivo
 6. Enfileira a task `run_etl` no Redis/Celery
 
-### B) Manual — Upload via API
+### B) Manual â€” Upload via API
 
 ```http
 POST /v1/files/upload
@@ -57,33 +62,33 @@ O arquivo `.xlsx` deve conter:
 
 | Aba | Obrigatoria | Usado por |
 |-----|-------------|-----------|
-| **Visao Cliente** | Sim | ETL principal — dados de todos os clientes |
+| **Visao Cliente** | Sim | ETL principal â€” dados de todos os clientes |
 | **Abertura** | Sim (analytics) | Indicadores: contas abertas e qualificadas |
 | **Relacionamento** | Sim (analytics) | Indicador: maquinas vendidas (instalacao C6Pay) |
 
 ---
 
-## 3. Pipeline ETL — 8 Steps Sequenciais
+## 3. Pipeline ETL â€” 8 Steps Sequenciais
 
-O worker processa o arquivo em **8 steps sequenciais**. Cada step e idempotente — se o job reiniciar, steps ja concluidos sao pulados (checkpoint por `etl_job_step`).
+O worker processa o arquivo em **8 steps sequenciais**. Cada step e idempotente â€” se o job reiniciar, steps ja concluidos sao pulados (checkpoint por `etl_job_step`).
 
 ```
-EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ──► UPSERT ──► ANALYTICS_SNAPSHOT ──► CNPJ_VERIFY
+EXTRACT â”€â”€â–º CLEAN â”€â”€â–º ENRICH â”€â”€â–º VALIDATE â”€â”€â–º STAGE â”€â”€â–º UPSERT â”€â”€â–º ANALYTICS_SNAPSHOT â”€â”€â–º CNPJ_VERIFY
 ```
 
-### Step 1 — EXTRACT
+### Step 1 â€” EXTRACT
 
 - Baixa o arquivo `.xlsx` do MinIO
 - Carrega todas as abas em memoria (workbook cache interno do worker)
 - Identifica a aba "Visao Cliente" por nome normalizado (ignora acentos/maiusculas)
 
-### Step 2 — CLEAN
+### Step 2 â€” CLEAN
 
 - Normaliza encoding (remove caracteres especiais corrompidos)
 - Remove linhas completamente vazias
 - Padroniza nomes de colunas para lowercase com underscore
 
-### Step 3 — ENRICH
+### Step 3 â€” ENRICH
 
 - Aplica as **25 colunas calculadas** com base nas regras de negocio C6 Bank
 - Exemplos de colunas calculadas:
@@ -99,28 +104,28 @@ EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ─�
 | `gap_cash_in` | Quanto falta para meta de cash in |
 | `dias_desde_abertura` | DATA_BASE - DT_CONTA_CRIADA |
 
-### Step 4 — VALIDATE
+### Step 4 â€” VALIDATE
 
 - Conta linhas invalidas (sem CPF/CNPJ, campos obrigatorios vazios, valores de nivel invalidos)
 - Grava detalhes das linhas invalidas em `etl_bad_rows`
 - Se mais de **5%** das linhas forem invalidas, aborta o job inteiro
 - Grava `rows_total`, `rows_ok`, `rows_bad` no job
 
-### Step 5 — STAGE
+### Step 5 â€” STAGE
 
 - Insere todas as linhas validas na tabela `staging_visao_cliente`
-- **A staging NAO e limpa entre jobs** — ela acumula o historico completo de todos os jobs
+- **A staging NAO e limpa entre jobs** â€” ela acumula o historico completo de todos os jobs
 - Cada linha e marcada com `etl_job_id` e `loaded_at`
 - Essa tabela e a fonte do endpoint `/v1/data/visao-cliente/historico`
 
-### Step 6 — UPSERT
+### Step 6 â€” UPSERT
 
 - Faz merge de `staging_visao_cliente` em `final_visao_cliente`
 - Regra de conflito: **vence o registro com `data_base` mais recente**
 - Garante **1 linha por `cd_cpf_cnpj_cliente`** na tabela final
 - Arquivo mais antigo nunca sobrescreve dado mais novo
 
-### Step 7 — ANALYTICS SNAPSHOT
+### Step 7 â€” ANALYTICS SNAPSHOT
 
 - Le as abas "Abertura" e "Relacionamento" do workbook em cache
 - Calcula os totais dos indicadores com busca tolerante a variacao de nome de coluna
@@ -132,7 +137,7 @@ EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ─�
 | `contas-qualificadas` | Aba "Abertura" | `SUM(Contas Qualificadas)` |
 | `instalacao-c6pay` | Aba "Relacionamento" | `SUM(Maquinas Vendidas Relacionamento)` |
 
-### Step 8 — CNPJ VERIFY
+### Step 8 â€” CNPJ VERIFY
 
 - Seleciona CNPJs do job atual que nao foram verificados nos ultimos 30 dias (TTL)
 - Processa ate **300 CNPJs por execucao** na BrasilAPI (~0.35s por CNPJ)
@@ -152,7 +157,7 @@ EXTRACT ──► CLEAN ──► ENRICH ──► VALIDATE ──► STAGE ─�
 | `etl_job_step` | Detalhe de cada step por job (inicio, fim, erro, status) |
 | `etl_bad_rows` | Linhas invalidas com motivo de rejeicao |
 | `staging_visao_cliente` | Historico completo de todas as linhas de todos os jobs (fonte do historico de CNPJ) |
-| `final_visao_cliente` | Tabela consolidada final — 1 linha por cliente, com o dado mais recente |
+| `final_visao_cliente` | Tabela consolidada final â€” 1 linha por cliente, com o dado mais recente |
 | `cnpj_rf_cache` | Cache de consultas BrasilAPI (TTL 30 dias) |
 | `cnpj_divergencia` | Divergencias entre dados C6 Bank e Receita Federal |
 | `analytics_indicator_snapshot` | Indicadores de analytics por data de referencia |
@@ -188,22 +193,22 @@ Documentacao completa de todos os endpoints: `docs/api-integracao.md`
 ### Endpoints disponiveis
 
 ```
-GET  /health                                          — API no ar?
-GET  /ready                                           — dependencias prontas?
-GET  /metrics                                         — metricas Prometheus
+GET  /health                                          â€” API no ar?
+GET  /ready                                           â€” dependencias prontas?
+GET  /metrics                                         â€” metricas Prometheus
 
-GET  /v1/files                                        — arquivos registrados
-GET  /v1/files/{file_id}                              — detalhe de arquivo
-POST /v1/files/upload                                 — upload manual de planilha
-POST /v1/files/sync                                   — disparo manual do checker
+GET  /v1/files                                        â€” arquivos registrados
+GET  /v1/files/{file_id}                              â€” detalhe de arquivo
+POST /v1/files/upload                                 â€” upload manual de planilha
+POST /v1/files/sync                                   â€” disparo manual do checker
 
-POST /v1/jobs/run                                     — iniciar ETL
-POST /v1/jobs/reprocess/{file_id}                     — reprocessar arquivo
-GET  /v1/jobs                                         — historico de execucoes
-GET  /v1/jobs/{job_id}                                — detalhe de execucao
+POST /v1/jobs/run                                     â€” iniciar ETL
+POST /v1/jobs/reprocess/{file_id}                     â€” reprocessar arquivo
+GET  /v1/jobs                                         â€” historico de execucoes
+GET  /v1/jobs/{job_id}                                â€” detalhe de execucao
 
-GET  /v1/data/visao-cliente?documento=<cpf_cnpj>      — dado atual do cliente
-GET  /v1/data/visao-cliente/historico?documento=<...> — linha do tempo do cliente
+GET  /v1/data/visao-cliente?documento=<cpf_cnpj>      â€” dado atual do cliente
+GET  /v1/data/visao-cliente/historico?documento=<...> â€” linha do tempo do cliente
 
 GET  /v1/analytics/contas-abertas/summary
 GET  /v1/analytics/contas-abertas/details
@@ -214,11 +219,11 @@ GET  /v1/analytics/instalacao-c6pay/details
 GET  /v1/analytics/qualificacao-c6pay/summary
 GET  /v1/analytics/qualificacao-c6pay/details
 
-GET  /v1/cnpj/{cnpj}                                  — dados Receita Federal
-GET  /v1/cnpj/divergencias/list                       — divergencias C6 vs RF
+GET  /v1/cnpj/{cnpj}                                  â€” dados Receita Federal
+GET  /v1/cnpj/divergencias/list                       â€” divergencias C6 vs RF
 
-GET  /v1/alerts                                       — alertas gerados
-GET  /v1/alerts/{alert_id}                            — detalhe de alerta
+GET  /v1/alerts                                       â€” alertas gerados
+GET  /v1/alerts/{alert_id}                            â€” detalhe de alerta
 ```
 
 ---
@@ -259,7 +264,7 @@ SMTP_PASSWORD=...
 ## 8. Retry e Tolerancia a Falhas
 
 - Jobs com falha entram em `RETRYING` automaticamente
-- Delays crescentes: 300s → 600s → 1200s
+- Delays crescentes: 300s â†’ 600s â†’ 1200s
 - Apos **3 retries**: status `DEAD` + alerta CRITICAL
 - Steps sao idempotentes: reinicio nao reprocessa o que ja foi feito
 - Concorrencia do worker ETL: **2** workers
@@ -316,7 +321,7 @@ etl-system/
     db.py                      # get_db_session() context manager
     visao_cliente_schema.py    # REQUIRED_COLUMNS, FINAL_TABLE_NAME, STAGING_TABLE_NAME
     analytics_snapshot_schema.py  # SNAPSHOT_INDICATORS, TABLE_NAME
-    brasilapi.py               # fetch_cnpj() — cliente da BrasilAPI
+    brasilapi.py               # fetch_cnpj() â€” cliente da BrasilAPI
   checker/
     checker.py                 # run_daily(): baixa arquivo e enfileira ETL
   notifier/
