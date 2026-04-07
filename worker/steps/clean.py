@@ -26,14 +26,26 @@ def _normalize_document(value) -> str | None:
 
 
 def _normalize_data_base(value):
+    import datetime as _dt
+
     text = str(value or "").strip()
     if not text or text.lower() in {"nan", "none", "nat"}:
         return None
 
-    parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
-    if pd.isna(parsed):
-        return text
-    return parsed.strftime("%d/%m/%Y")
+    # Try explicit formats — strptime is unambiguous unlike pd.to_datetime(dayfirst=True)
+    for fmt, length in [
+        ("%d/%m/%Y", 10),
+        ("%Y-%m-%d", 10),
+        ("%d/%m/%Y %H:%M:%S", 19),
+        ("%Y-%m-%d %H:%M:%S", 19),
+    ]:
+        try:
+            d = _dt.datetime.strptime(text[:length], fmt)
+            return d.strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+
+    return text
 
 
 def run_clean(session: Session, job_id: str) -> None:
