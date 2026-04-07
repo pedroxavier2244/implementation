@@ -33,7 +33,7 @@ def _normalize_data_base(value):
     parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
     if pd.isna(parsed):
         return text
-    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+    return parsed.strftime("%d/%m/%Y")
 
 
 def run_clean(session: Session, job_id: str) -> None:

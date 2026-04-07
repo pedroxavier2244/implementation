@@ -70,7 +70,7 @@ def run_extract(session: Session, job_id: str, etl_file) -> None:
     try:
         minio = MinioClient()
         file_bytes = minio.download_file(etl_file.minio_path)
-        workbook = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
+        workbook = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None, dtype=str)
 
         sheet_name = _resolve_sheet_name(
             workbook,
