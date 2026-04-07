@@ -69,13 +69,19 @@ def run_upsert(session: Session, job_id: str, historico_only: bool = False) -> N
         mark_step_done(session, job_id, "upsert")
         return
 
-    # Cria backup de projetinho_pai antes de qualquer alteração — permite rollback rápido
+    # Cria backup de projetinho_pai antes de qualquer alteração — mantém apenas o último
     from datetime import date as _date
     backup_table = f"projetinho_pai_backup_{_date.today().strftime('%Y%m%d')}"
-    session.execute(text(f"DROP TABLE IF EXISTS public.{backup_table}"))
+    # Remove todos os backups antigos antes de criar o novo
+    old_backups = session.execute(text("""
+        SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public' AND tablename LIKE 'projetinho_pai_backup_%'
+    """)).fetchall()
+    for (old,) in old_backups:
+        session.execute(text(f"DROP TABLE IF EXISTS public.{old}"))
     session.execute(text(f"CREATE TABLE public.{backup_table} AS SELECT * FROM {PROJETINHO_PAI}"))
     session.commit()
-    logger.info("Backup criado: %s", backup_table,
+    logger.info("Backup criado: %s (backups anteriores removidos)", backup_table,
                 extra={"job_id": job_id, "step": "upsert", "event": "backup_created",
                        "backup_table": backup_table})
 
