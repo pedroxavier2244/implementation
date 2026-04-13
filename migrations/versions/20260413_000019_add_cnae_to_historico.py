@@ -31,14 +31,32 @@ _TABLES = [
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
     for table in _TABLES:
-        op.execute(
-            sa.text(f'ALTER TABLE public.{table} ADD COLUMN IF NOT EXISTS "CNAE" text')
-        )
+        exists = conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = :t"
+            ),
+            {"t": table},
+        ).fetchone()
+        if exists:
+            op.execute(
+                sa.text(f'ALTER TABLE public.{table} ADD COLUMN IF NOT EXISTS "CNAE" text')
+            )
 
 
 def downgrade() -> None:
+    conn = op.get_bind()
     for table in _TABLES:
-        op.execute(
-            sa.text(f'ALTER TABLE public.{table} DROP COLUMN IF EXISTS "CNAE"')
-        )
+        exists = conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = :t"
+            ),
+            {"t": table},
+        ).fetchone()
+        if exists:
+            op.execute(
+                sa.text(f'ALTER TABLE public.{table} DROP COLUMN IF EXISTS "CNAE"')
+            )
