@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     # CNPJ Verification
     CNPJ_CACHE_TTL_DAYS: int = 30
     BRASILAPI_TIMEOUT: int = 10
+    CNPJ_API_URL: str = "http://5.189.163.33"
+    CNPJ_API_KEY: str = ""
 
     # Google Drive integration
     GOOGLE_DRIVE_FOLDER_ID: str = ""
