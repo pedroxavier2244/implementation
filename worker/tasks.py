@@ -16,6 +16,7 @@ from worker.steps.enrich import run_enrich
 from worker.steps.extract import clear_cached_dataframe, run_extract
 from worker.steps.stage import run_stage
 from worker.steps.assign_leads import run_assign_leads
+from worker.steps.cnpj_enrich import run_cnpj_enrich
 from worker.steps.upsert import run_upsert
 from worker.steps.validate import run_validate
 
@@ -107,6 +108,9 @@ def run_etl(self, job_id: str | None, file_id: str | None, historico_only: bool 
             if not job.historico_only:
                 current_step = "assign_leads"
                 run_assign_leads(session, job_id)
+
+                current_step = "cnpj_enrich"
+                run_cnpj_enrich(session, job_id)
 
             # Mark job done BEFORE cleanup — all in same transaction
             job.status = "DONE"

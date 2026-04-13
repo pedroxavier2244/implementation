@@ -92,3 +92,40 @@ def test_run_etl_rolls_back_session_before_marking_failure():
         mock_stage.assert_called_once()
         mock_session.rollback.assert_called_once()
         mock_mark_step_failed.assert_called_once_with(mock_session, "job-1", "upsert", "upsert failed")
+
+
+def test_run_etl_calls_cnpj_enrich_after_assign_leads():
+    """cnpj_enrich deve ser chamado após assign_leads no pipeline."""
+    with patch("worker.tasks.get_db_session") as mock_db, \
+         patch("worker.tasks.run_extract"), \
+         patch("worker.tasks.run_validate"), \
+         patch("worker.tasks.run_clean"), \
+         patch("worker.tasks.run_enrich"), \
+         patch("worker.tasks.run_stage"), \
+         patch("worker.tasks.run_upsert"), \
+         patch("worker.tasks.run_assign_leads") as mock_assign, \
+         patch("worker.tasks.run_cnpj_enrich") as mock_enrich:
+
+        mock_session = MagicMock()
+        mock_db.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
+        from shared.models import EtlFile, EtlJobRun
+        mock_job = EtlJobRun(id="job-1", file_id="f-1", status="QUEUED",
+                             triggered_by="scheduler", max_retries=3, historico_only=False)
+        mock_file = EtlFile(id="f-1", minio_path="path.xlsx", hash_sha256="h", file_date=None)
+
+        def _q(model):
+            q = MagicMock()
+            q.filter_by.return_value.first.return_value = (
+                mock_job if model.__name__ == "EtlJobRun" else mock_file
+            )
+            q.filter.return_value.with_for_update.return_value.first.return_value = None
+            return q
+        mock_session.query.side_effect = _q
+
+        from worker.tasks import run_etl
+        run_etl.__wrapped__.__func__(run_etl, job_id="job-1", file_id=None)
+
+    mock_assign.assert_called_once()
+    mock_enrich.assert_called_once()
